@@ -1,6 +1,6 @@
 # Xboard staging deployment
 
-This directory defines the disposable Xboard test stack on GJHK. Pushes to the integration branches `main`, `master`, `dev`, and `new-dev` deploy automatically. Any other branch can deploy only through `workflow_dispatch` selected on that branch. Every deployment uses prebuilt GHCR images; the server never compiles source code.
+This directory defines the disposable Xboard test stack on GJHK. Pushes to the integration branches `main`, `master`, `dev`, and `new-dev`, plus opt-in `staging/**` branches, deploy automatically. Any other branch can deploy only through `workflow_dispatch` selected on that branch. Every deployment uses prebuilt GHCR images; the server never compiles source code.
 
 ## Runtime layout
 

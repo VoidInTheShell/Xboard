@@ -56,7 +56,7 @@ jobs:
             --env QUEUE_CONNECTION=sync \
             --env SESSION_DRIVER=array \
             xboard-ci:${GITHUB_SHA} \
-            -c 'touch database/testing.sqlite && php artisan test --colors=always'
+            -c 'touch database/testing.sqlite && php artisan test'
 
       - name: Verify Artisan boot and staging command registration
         run: |

@@ -264,10 +264,14 @@ jobs:
           umask 077
           curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 "${PANEL_URL}/healthz" > /dev/null
           curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 "${PANEL_URL}/" > /dev/null
-          curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 "${PANEL_URL}/${ADMIN_PATH}" > /dev/null
+          admin_page=$(mktemp)
           login_request=$(mktemp)
           login_response=$(mktemp)
-          trap 'rm -f -- "${login_request}" "${login_response}"' EXIT
+          trap 'rm -f -- "${admin_page}" "${login_request}" "${login_response}"' EXIT
+          curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 \
+            "${PANEL_URL}/${ADMIN_PATH}" > "${admin_page}"
+          grep --fixed-strings '<title>XBoard</title>' "${admin_page}" > /dev/null
+          grep --fixed-strings '/assets/admin/' "${admin_page}" > /dev/null
           jq -n --arg email "${TEST_USER_EMAIL}" --arg password "${TEST_USER_PASSWORD}" \
             '{email: $email, password: $password}' > "${login_request}"
           login_status=$(curl --silent --show-error --output "${login_response}" --write-out '%{http_code}' \

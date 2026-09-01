@@ -32,6 +32,7 @@ Environment variables:
 - `STAGING_SSH_PORT`
 - `STAGING_SSH_USER` (normally `beihai`)
 - `STAGING_PANEL_URL` (normally `https://xboard.uegov.org`)
+- `STAGING_ADMIN_PATH` (exactly eight lowercase hexadecimal characters; kept stable across disposable rebuilds)
 - `STAGING_NODE_HOST`
 - `STAGING_NODE_ID` (must remain `1` for the fresh database)
 - `STAGING_NODE_PUBLIC_PORT`

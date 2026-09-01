@@ -126,6 +126,7 @@ jobs:
       SSH_PORT: ${{ vars.STAGING_SSH_PORT }}
       SSH_USER: ${{ vars.STAGING_SSH_USER }}
       PANEL_URL: ${{ vars.STAGING_PANEL_URL }}
+      ADMIN_PATH: ${{ vars.STAGING_ADMIN_PATH }}
       NODE_HOST: ${{ vars.STAGING_NODE_HOST }}
       NODE_ID: ${{ vars.STAGING_NODE_ID }}
       NODE_PUBLIC_PORT: ${{ vars.STAGING_NODE_PUBLIC_PORT }}
@@ -152,6 +153,7 @@ jobs:
           : "${SSH_PORT:?STAGING_SSH_PORT is required}"
           : "${SSH_USER:?STAGING_SSH_USER is required}"
           : "${PANEL_URL:?STAGING_PANEL_URL is required}"
+          : "${ADMIN_PATH:?STAGING_ADMIN_PATH is required}"
           : "${NODE_HOST:?STAGING_NODE_HOST is required}"
           : "${NODE_ID:?STAGING_NODE_ID is required}"
           : "${NODE_PUBLIC_PORT:?STAGING_NODE_PUBLIC_PORT is required}"
@@ -162,6 +164,10 @@ jobs:
           : "${SERVER_TOKEN:?STAGING_SERVER_TOKEN is required}"
           : "${SSH_PRIVATE_KEY:?STAGING_SSH_PRIVATE_KEY is required}"
           : "${SSH_KNOWN_HOSTS:?STAGING_SSH_KNOWN_HOSTS is required}"
+          if ! [[ "${ADMIN_PATH}" =~ ^[0-9a-f]{8}$ ]]; then
+            echo "STAGING_ADMIN_PATH must contain exactly eight lowercase hexadecimal characters" >&2
+            exit 1
+          fi
           if [ "${#SERVER_TOKEN}" -lt 16 ]; then
             echo "STAGING_SERVER_TOKEN must contain at least 16 characters" >&2
             exit 1
@@ -189,6 +195,7 @@ jobs:
             printf 'DK_THEME_IMAGE=%s\n' "${DK_THEME_IMAGE}"
             printf 'STAGING_ADMIN_ACCOUNT=%s\n' "${ADMIN_ACCOUNT}"
             printf 'STAGING_PANEL_URL=%s\n' "${PANEL_URL}"
+            printf 'STAGING_ADMIN_PATH=%s\n' "${ADMIN_PATH}"
             printf 'STAGING_NODE_NAME=%s\n' 'US2 Staging'
             printf 'STAGING_NODE_HOST=%s\n' "${NODE_HOST}"
             printf 'STAGING_NODE_ID=%s\n' "${NODE_ID}"
@@ -217,6 +224,7 @@ jobs:
           set -Eeuo pipefail
           curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 "${PANEL_URL}/healthz" > /dev/null
           curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 "${PANEL_URL}/" > /dev/null
+          curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 "${PANEL_URL}/${ADMIN_PATH}" > /dev/null
 
       - name: Remove sensitive deployment bundle
         if: always()

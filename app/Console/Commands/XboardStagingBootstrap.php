@@ -30,6 +30,7 @@ class XboardStagingBootstrap extends Command
             if (filter_var($panelUrl, FILTER_VALIDATE_URL) === false) {
                 throw new RuntimeException('STAGING_PANEL_URL must be an absolute URL.');
             }
+            $adminPath = $this->adminPathEnv('STAGING_ADMIN_PATH');
 
             $nodeName = getenv('STAGING_NODE_NAME') ?: 'US2 Staging';
             $nodeHost = $this->requiredEnv('STAGING_NODE_HOST');
@@ -43,6 +44,7 @@ class XboardStagingBootstrap extends Command
 
             admin_setting([
                 'app_url' => rtrim($panelUrl, '/'),
+                'secure_path' => $adminPath,
                 'server_token' => $serverToken,
                 'server_ws_enable' => 1,
                 'server_pull_interval' => 10,
@@ -91,7 +93,8 @@ class XboardStagingBootstrap extends Command
             Cache::flush();
 
             $this->info(sprintf(
-                'Staging bootstrap complete: node_id=%d name=%s type=%s host=%s public_port=%d listen_port=%d ws_path=%s',
+                'Staging bootstrap complete: admin_path=%s node_id=%d name=%s type=%s host=%s public_port=%d listen_port=%d ws_path=%s',
+                $adminPath,
                 $server->id,
                 $server->name,
                 $server->type,
@@ -152,6 +155,16 @@ class XboardStagingBootstrap extends Command
         }
 
         return (int) $port;
+    }
+
+    private function adminPathEnv(string $name): string
+    {
+        $path = $this->requiredEnv($name);
+        if (!preg_match('/^[0-9a-f]{8}$/', $path)) {
+            throw new RuntimeException("{$name} must contain exactly eight lowercase hexadecimal characters.");
+        }
+
+        return $path;
     }
 
     private function positiveIntEnv(string $name, int $default): int

@@ -149,6 +149,8 @@ jobs:
       NODE_WS_PATH: ${{ secrets.STAGING_NODE_WS_PATH }}
       ADMIN_ACCOUNT: ${{ secrets.STAGING_ADMIN_ACCOUNT }}
       ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+      TEST_USER_EMAIL: ${{ vars.STAGING_TEST_USER_EMAIL }}
+      TEST_USER_PASSWORD: ${{ secrets.STAGING_TEST_USER_PASSWORD }}
       SERVER_TOKEN: ${{ secrets.STAGING_SERVER_TOKEN }}
       SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
       SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
@@ -176,6 +178,8 @@ jobs:
           : "${NODE_WS_PATH:?STAGING_NODE_WS_PATH is required}"
           : "${ADMIN_ACCOUNT:?STAGING_ADMIN_ACCOUNT is required}"
           : "${ADMIN_PASSWORD:?STAGING_ADMIN_PASSWORD is required}"
+          : "${TEST_USER_EMAIL:?STAGING_TEST_USER_EMAIL is required}"
+          : "${TEST_USER_PASSWORD:?STAGING_TEST_USER_PASSWORD is required}"
           : "${SERVER_TOKEN:?STAGING_SERVER_TOKEN is required}"
           : "${SSH_PRIVATE_KEY:?STAGING_SSH_PRIVATE_KEY is required}"
           : "${SSH_KNOWN_HOSTS:?STAGING_SSH_KNOWN_HOSTS is required}"
@@ -185,6 +189,10 @@ jobs:
           fi
           if [ "${#SERVER_TOKEN}" -lt 16 ]; then
             echo "STAGING_SERVER_TOKEN must contain at least 16 characters" >&2
+            exit 1
+          fi
+          if [ "${#TEST_USER_PASSWORD}" -lt 8 ]; then
+            echo "STAGING_TEST_USER_PASSWORD must contain at least 8 characters" >&2
             exit 1
           fi
 
@@ -204,11 +212,13 @@ jobs:
           install -m 700 deploy/staging/deploy.sh "${BUNDLE_DIR}/deploy.sh"
           printf '%s' "${ADMIN_PASSWORD}" > "${BUNDLE_DIR}/admin_password"
           printf '%s' "${SERVER_TOKEN}" > "${BUNDLE_DIR}/server_token"
-          chmod 600 "${BUNDLE_DIR}/admin_password" "${BUNDLE_DIR}/server_token"
+          printf '%s' "${TEST_USER_PASSWORD}" > "${BUNDLE_DIR}/test_user_password"
+          chmod 600 "${BUNDLE_DIR}/admin_password" "${BUNDLE_DIR}/server_token" "${BUNDLE_DIR}/test_user_password"
           {
             printf 'XBOARD_IMAGE=%s\n' "${XBOARD_IMAGE}"
             printf 'DK_THEME_IMAGE=%s\n' "${DK_THEME_IMAGE}"
             printf 'STAGING_ADMIN_ACCOUNT=%s\n' "${ADMIN_ACCOUNT}"
+            printf 'STAGING_TEST_USER_EMAIL=%s\n' "${TEST_USER_EMAIL}"
             printf 'STAGING_PANEL_URL=%s\n' "${PANEL_URL}"
             printf 'STAGING_ADMIN_PATH=%s\n' "${ADMIN_PATH}"
             printf 'STAGING_NODE_NAME=%s\n' 'US2 Staging'

@@ -68,6 +68,7 @@ require_file "$RESOLVED_BUNDLE/compose.yaml"
 require_file "$RESOLVED_BUNDLE/deploy.env"
 require_file "$RESOLVED_BUNDLE/admin_password"
 require_file "$RESOLVED_BUNDLE/server_token"
+require_file "$RESOLVED_BUNDLE/test_user_password"
 
 IFS= read -r REGISTRY_TOKEN || true
 [ -n "${REGISTRY_TOKEN:-}" ] || fail "registry token was not provided on stdin"
@@ -111,6 +112,7 @@ install -m 644 "$RESOLVED_BUNDLE/compose.yaml" "$TARGET_DIR/compose.yaml"
 install -m 600 "$RESOLVED_BUNDLE/deploy.env" "$TARGET_DIR/.deploy.env"
 install -m 600 "$RESOLVED_BUNDLE/admin_password" "$TARGET_DIR/secrets/admin_password"
 install -m 600 "$RESOLVED_BUNDLE/server_token" "$TARGET_DIR/secrets/server_token"
+install -m 600 "$RESOLVED_BUNDLE/test_user_password" "$TARGET_DIR/secrets/test_user_password"
 install -m 600 /dev/null "$TARGET_DIR/.env"
 
 XBOARD_IMAGE=$(sed -n 's/^XBOARD_IMAGE=//p' "$TARGET_DIR/.deploy.env" | tail -1)

@@ -3,8 +3,13 @@
 namespace App\Console\Commands;
 
 use App\Models\Server;
+use App\Models\ServerGroup;
+use App\Models\User;
+use App\Services\ServerService;
+use App\Services\UserService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Hash;
 use RuntimeException;
 
 class XboardStagingBootstrap extends Command
@@ -24,6 +29,15 @@ class XboardStagingBootstrap extends Command
             $serverToken = $this->requiredSecret('SERVER_TOKEN');
             if (strlen($serverToken) < 16) {
                 throw new RuntimeException('SERVER_TOKEN must contain at least 16 characters.');
+            }
+
+            $testUserEmail = strtolower($this->requiredEnv('STAGING_TEST_USER_EMAIL'));
+            if (filter_var($testUserEmail, FILTER_VALIDATE_EMAIL) === false) {
+                throw new RuntimeException('STAGING_TEST_USER_EMAIL must be a valid email address.');
+            }
+            $testUserPassword = $this->requiredSecret('STAGING_TEST_USER_PASSWORD');
+            if (strlen($testUserPassword) < 8) {
+                throw new RuntimeException('STAGING_TEST_USER_PASSWORD must contain at least 8 characters.');
             }
 
             $panelUrl = $this->requiredEnv('STAGING_PANEL_URL');
@@ -51,6 +65,13 @@ class XboardStagingBootstrap extends Command
                 'server_push_interval' => 10,
             ]);
 
+            $group = ServerGroup::where('name', 'Staging Access')->first();
+            if ($group === null) {
+                $group = new ServerGroup();
+                $group->name = 'Staging Access';
+                $group->save();
+            }
+
             $server = Server::updateOrCreate(
                 ['name' => $nodeName],
                 [
@@ -62,7 +83,7 @@ class XboardStagingBootstrap extends Command
                     'show' => 1,
                     'enabled' => true,
                     'sort' => 1,
-                    'group_ids' => [],
+                    'group_ids' => [(string) $group->id],
                     'route_ids' => [],
                     'tags' => ['staging'],
                     'protocol_settings' => [
@@ -90,10 +111,34 @@ class XboardStagingBootstrap extends Command
                 );
             }
 
+            $testUser = User::byEmail($testUserEmail)->first();
+            if ($testUser === null) {
+                $testUser = app(UserService::class)->createUser([
+                    'email' => $testUserEmail,
+                    'password' => $testUserPassword,
+                ]);
+            }
+            $testUser->email = $testUserEmail;
+            $testUser->password = Hash::make($testUserPassword);
+            $testUser->group_id = $group->id;
+            $testUser->plan_id = null;
+            $testUser->transfer_enable = 100 * 1024 * 1024 * 1024;
+            $testUser->u = 0;
+            $testUser->d = 0;
+            $testUser->banned = false;
+            $testUser->is_admin = false;
+            $testUser->is_staff = false;
+            $testUser->expired_at = null;
+            $testUser->save();
+
             Cache::flush();
 
+            if (!ServerService::getAvailableUsers($server)->contains('id', $testUser->id)) {
+                throw new RuntimeException('The staging test user is not available to the staging node.');
+            }
+
             $this->info(sprintf(
-                'Staging bootstrap complete: admin_path=%s node_id=%d name=%s type=%s host=%s public_port=%d listen_port=%d ws_path=%s',
+                'Staging bootstrap complete: admin_path=%s node_id=%d name=%s type=%s host=%s public_port=%d listen_port=%d group_id=%d test_user=%s',
                 $adminPath,
                 $server->id,
                 $server->name,
@@ -101,7 +146,8 @@ class XboardStagingBootstrap extends Command
                 $server->host,
                 $server->port,
                 $server->server_port,
-                $websocketPath,
+                $group->id,
+                $testUser->email,
             ));
 
             return self::SUCCESS;

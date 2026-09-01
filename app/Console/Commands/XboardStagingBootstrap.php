@@ -14,6 +14,8 @@ use RuntimeException;
 
 class XboardStagingBootstrap extends Command
 {
+    private const STAGING_ADMIN_PATH = 'unitedearthgov';
+
     protected $signature = 'xboard:staging-bootstrap';
 
     protected $description = 'Create the disposable staging server configuration from environment variables';
@@ -206,8 +208,8 @@ class XboardStagingBootstrap extends Command
     private function adminPathEnv(string $name): string
     {
         $path = $this->requiredEnv($name);
-        if (!preg_match('/^[0-9a-f]{8}$/', $path)) {
-            throw new RuntimeException("{$name} must contain exactly eight lowercase hexadecimal characters.");
+        if (!hash_equals(self::STAGING_ADMIN_PATH, $path)) {
+            throw new RuntimeException("{$name} must be " . self::STAGING_ADMIN_PATH . ' for this project.');
         }
 
         return $path;

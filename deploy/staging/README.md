@@ -36,7 +36,7 @@ Environment variables:
 - `STAGING_SSH_PORT`
 - `STAGING_SSH_USER` (normally `beihai`)
 - `STAGING_PANEL_URL` (normally `https://xboard.uegov.org`)
-- `STAGING_ADMIN_PATH` (exactly eight lowercase hexadecimal characters; kept stable across disposable rebuilds)
+- `STAGING_ADMIN_PATH` (fixed to `unitedearthgov`, matching the project-wide `/unitedearthgov` administrator entrypoint)
 - `STAGING_TEST_USER_EMAIL` (normally `test@test.user`)
 - `STAGING_NODE_HOST`
 - `STAGING_NODE_ID` (must remain `1` for the fresh database)

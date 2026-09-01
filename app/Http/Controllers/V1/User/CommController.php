@@ -23,7 +23,8 @@ class CommController extends Controller
             'commission_distribution_enable' => (int)admin_setting('commission_distribution_enable', 0),
             'commission_distribution_l1' => admin_setting('commission_distribution_l1'),
             'commission_distribution_l2' => admin_setting('commission_distribution_l2'),
-            'commission_distribution_l3' => admin_setting('commission_distribution_l3')
+            'commission_distribution_l3' => admin_setting('commission_distribution_l3'),
+            'self_use_mode' => (int) admin_setting('self_use_mode', 0),
         ];
         return $this->success($data);
     }

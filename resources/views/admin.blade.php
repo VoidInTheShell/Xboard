@@ -77,6 +77,8 @@
     <script src="/assets/admin/locales/zh-CN.js"></script>
     <script src="/assets/admin/locales/ko-KR.js"></script>
   @endif
+  <link rel="stylesheet" href="/assets/ueg-admin-customizations.css?v={{ urlencode($version) }}" />
+  <script type="module" src="/assets/ueg-admin-customizations.js?v={{ urlencode($version) }}"></script>
 </head>
 
 <body>

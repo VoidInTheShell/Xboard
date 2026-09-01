@@ -137,6 +137,7 @@ class ConfigController extends Controller
                 'frontend_theme_header' => admin_setting('frontend_theme_header', 'dark'),
                 'frontend_theme_color' => admin_setting('frontend_theme_color', 'default'),
                 'frontend_background_url' => admin_setting('frontend_background_url'),
+                'self_use_mode' => (bool) admin_setting('self_use_mode', 0),
             ],
             'server' => [
                 'server_token' => admin_setting('server_token'),

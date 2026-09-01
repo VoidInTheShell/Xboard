@@ -202,7 +202,7 @@ class MachineController extends Controller
     private function buildInstallCommand(Request $request, ServerMachine $machine): string
     {
         $panelUrl = rtrim((string) (admin_setting('app_url') ?: $request->getSchemeAndHttpHost()), '/');
-        $installerUrl = 'https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh';
+        $installerUrl = 'https://raw.githubusercontent.com/VoidInTheShell/Xboard-Node/dev/install.sh';
 
         return sprintf(
             'curl -fsSL %s | sudo bash -s -- --mode machine --panel %s --token %s --machine-id %d',

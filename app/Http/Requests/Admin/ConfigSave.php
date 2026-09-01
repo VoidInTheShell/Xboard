@@ -59,6 +59,7 @@ class ConfigSave extends FormRequest
         'frontend_theme_header' => 'nullable|in:dark,light',
         'frontend_theme_color' => 'nullable|in:default,darkblue,black,green',
         'frontend_background_url' => 'nullable|url',
+        'self_use_mode' => 'boolean',
         // email
         'email_host' => '',
         'email_port' => '',

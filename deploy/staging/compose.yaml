@@ -61,7 +61,7 @@ services:
       STAGING_NODE_ID: ${STAGING_NODE_ID:-1}
       STAGING_NODE_PUBLIC_PORT: ${STAGING_NODE_PUBLIC_PORT:-443}
       STAGING_NODE_LISTEN_PORT: ${STAGING_NODE_LISTEN_PORT:-30080}
-      STAGING_NODE_WS_PATH: ${STAGING_NODE_WS_PATH:-/xboard-staging-ws}
+      STAGING_NODE_WS_PATH: ${STAGING_NODE_WS_PATH:?STAGING_NODE_WS_PATH is required}
       docker: "true"
     secrets:
       - admin_password

@@ -25,6 +25,7 @@ Environment secrets:
 - `STAGING_ADMIN_ACCOUNT`: staging administrator email (`beihai3body@uegov.org`)
 - `STAGING_ADMIN_PASSWORD`: disposable administrator password
 - `STAGING_SERVER_TOKEN`: shared panel/node communication token, at least 16 characters
+- `STAGING_NODE_WS_PATH`: opaque VLESS WebSocket path; store the same value in the Xboard-Node staging Environment secret
 
 Environment variables:
 
@@ -37,9 +38,8 @@ Environment variables:
 - `STAGING_NODE_ID` (must remain `1` for the fresh database)
 - `STAGING_NODE_PUBLIC_PORT`
 - `STAGING_NODE_LISTEN_PORT`
-- `STAGING_NODE_WS_PATH`
 
-The same value stored as `STAGING_SERVER_TOKEN` here must be stored as `STAGING_API_KEY` in the Xboard-Node repository's `staging` environment.
+The same value stored as `STAGING_SERVER_TOKEN` here must be stored as `STAGING_API_KEY` in the Xboard-Node repository's `staging` environment. The same `STAGING_NODE_WS_PATH` secret must also be present in both repositories; neither value may be printed in workflow logs.
 
 The fresh database creates node `1` as VLESS over WebSocket. Its public endpoint is the DNS hostname on port `443`; TLS is terminated by the US2 reverse-proxy/cover entrypoint, while Xboard-Node listens without TLS on the private `STAGING_NODE_LISTEN_PORT`. This split is represented by the fork-specific `protocol_settings.server_tls` field so client subscriptions keep TLS enabled without requiring the node process to own port 443.
 

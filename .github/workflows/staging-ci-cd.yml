@@ -41,8 +41,22 @@ jobs:
           tags: xboard-ci:${{ github.sha }}
           build-args: |
             APP_VERSION=${{ github.sha }}
+            INSTALL_DEV_DEPENDENCIES=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Run PHP test suite
+        run: |
+          docker run --rm --entrypoint sh \
+            --env APP_ENV=testing \
+            --env APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+            --env CACHE_STORE=array \
+            --env DB_CONNECTION=sqlite \
+            --env DB_DATABASE=database/testing.sqlite \
+            --env QUEUE_CONNECTION=sync \
+            --env SESSION_DRIVER=array \
+            xboard-ci:${GITHUB_SHA} \
+            -c 'touch database/testing.sqlite && php artisan test --colors=always'
 
       - name: Verify Artisan boot and staging command registration
         run: |
@@ -247,9 +261,20 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          umask 077
           curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 "${PANEL_URL}/healthz" > /dev/null
           curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 "${PANEL_URL}/" > /dev/null
           curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 "${PANEL_URL}/${ADMIN_PATH}" > /dev/null
+          login_request=$(mktemp)
+          login_response=$(mktemp)
+          trap 'rm -f -- "${login_request}" "${login_response}"' EXIT
+          jq -n --arg email "${TEST_USER_EMAIL}" --arg password "${TEST_USER_PASSWORD}" \
+            '{email: $email, password: $password}' > "${login_request}"
+          login_status=$(curl --silent --show-error --output "${login_response}" --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' --data-binary "@${login_request}" \
+            "${PANEL_URL}/api/v1/passport/auth/login")
+          test "${login_status}" = "200"
+          jq -e '.data.auth_data | type == "string" and startswith("Bearer ")' "${login_response}" > /dev/null
 
       - name: Remove sensitive deployment bundle
         if: always()

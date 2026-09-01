@@ -2,6 +2,8 @@
 
 This directory defines the disposable Xboard test stack on GJHK. Pushes to the integration branches `main`, `master`, `dev`, and `new-dev`, plus opt-in `staging/**` branches, deploy automatically. Any other branch can deploy only through `workflow_dispatch` selected on that branch. Every deployment uses prebuilt GHCR images; the server never compiles source code.
 
+Every branch push and pull request builds a CI-only image with Composer development dependencies and runs the PHP test suite. Published runtime images keep development dependencies excluded. Deployments also verify that the disposable test user can log in through the public API without printing the returned authentication token.
+
 ## Runtime layout
 
 - Target directory: `/home/beihai/docker/xboard`

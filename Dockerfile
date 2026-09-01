@@ -21,11 +21,16 @@ COPY .docker/caddy/Caddyfile /etc/caddy/Caddyfile
 COPY .docker/php/zz-xboard.ini /usr/local/etc/php/conf.d/zz-xboard.ini
 
 ARG APP_VERSION=dev
+ARG INSTALL_DEV_DEPENDENCIES=false
 
 RUN if [ -n "${APP_VERSION}" ]; then \
         sed -i "s/'version' => '.*'/'version' => '${APP_VERSION}'/g" config/app.php; \
     fi \
-    && composer install --no-cache --no-dev --no-security-blocking \
+    && if [ "${INSTALL_DEV_DEPENDENCIES}" = "true" ]; then \
+        composer install --no-cache --no-security-blocking; \
+    else \
+        composer install --no-cache --no-dev --no-security-blocking; \
+    fi \
     && php artisan storage:link \
     && chown -R www:www /www \
     && chmod -R 775 /www \

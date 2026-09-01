@@ -22,7 +22,7 @@ Environment secrets:
 
 - `STAGING_SSH_PRIVATE_KEY`: dedicated deployment private key
 - `STAGING_SSH_KNOWN_HOSTS`: pinned SSH host-key line for GJHK
-- `STAGING_ADMIN_ACCOUNT`: disposable administrator email
+- `STAGING_ADMIN_ACCOUNT`: staging administrator email (`beihai3body@uegov.org`)
 - `STAGING_ADMIN_PASSWORD`: disposable administrator password
 - `STAGING_SERVER_TOKEN`: shared panel/node communication token, at least 16 characters
 
@@ -41,6 +41,8 @@ Environment variables:
 The same value stored as `STAGING_SERVER_TOKEN` here must be stored as `STAGING_API_KEY` in the Xboard-Node repository's `staging` environment.
 
 The fresh database creates node `1` as VLESS over WebSocket. Its public endpoint is the DNS hostname on port `443`; TLS is terminated by the US2 reverse-proxy/cover entrypoint, while Xboard-Node listens without TLS on the private `STAGING_NODE_LISTEN_PORT`. This split is represented by the fork-specific `protocol_settings.server_tls` field so client subscriptions keep TLS enabled without requiring the node process to own port 443.
+
+Do not publish the staging node DNS record until the US2 reverse proxy and cover site are healthy. The panel record can exist first because the disposable database is rebuilt independently from the node host.
 
 ## Safety and recovery
 

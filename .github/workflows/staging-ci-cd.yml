@@ -2,9 +2,9 @@ name: Docker Build, Publish and Deploy
 
 on:
   push:
-    branches: ["master", "new-dev"]
+    branches: ["**"]
   pull_request:
-    branches: ["master", "new-dev"]
+    branches: ["**"]
   workflow_dispatch:
 
 env:
@@ -111,10 +111,24 @@ jobs:
   deploy-staging:
     name: Rebuild GJHK staging
     if: >-
-      github.ref == 'refs/heads/master' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      startsWith(github.ref, 'refs/heads/') &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'push' &&
+          (
+            github.ref == 'refs/heads/main' ||
+            github.ref == 'refs/heads/master' ||
+            github.ref == 'refs/heads/dev' ||
+            github.ref == 'refs/heads/new-dev'
+          )
+        )
+      )
     needs: build-and-push
     runs-on: ubuntu-latest
+    concurrency:
+      group: staging-${{ github.repository_id }}
+      cancel-in-progress: false
     environment:
       name: staging
       url: ${{ vars.STAGING_PANEL_URL }}

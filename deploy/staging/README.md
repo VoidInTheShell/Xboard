@@ -1,6 +1,6 @@
 # Xboard staging deployment
 
-This directory defines the disposable Xboard test stack on GJHK. It is deployed only from the public fork's `master` branch and always uses prebuilt GHCR images. The server never compiles source code.
+This directory defines the disposable Xboard test stack on GJHK. Pushes to the integration branches `main`, `master`, `dev`, and `new-dev` deploy automatically. Any other branch can deploy only through `workflow_dispatch` selected on that branch. Every deployment uses prebuilt GHCR images; the server never compiles source code.
 
 ## Runtime layout
 
@@ -12,7 +12,7 @@ This directory defines the disposable Xboard test stack on GJHK. It is deployed 
 - Database: disposable SQLite under `data/`
 - Cache/queue: the image's embedded Redis with a named Compose volume
 
-Every successful `master` deployment stops the old Compose project, removes only this service's containers, named volume and explicit runtime subdirectories, then performs a fresh install. No production host or production database is part of this workflow.
+Every successful staging deployment stops the old Compose project, removes only this service's containers, named volume and explicit runtime subdirectories, then performs a fresh install. The shared staging host is not branch-isolated, so the latest successful deployment becomes the current test version. No production host or production database is part of this workflow.
 
 ## GitHub environment
 
@@ -49,7 +49,7 @@ Do not publish the staging node DNS record until the US2 reverse proxy and cover
 
 The remote script hard-checks the target and incoming bundle paths, then takes `/home/beihai/docker/xboard/.deploy.lock`. A failed install leaves the Actions run red and includes container status/log tails without printing externally supplied administrator credentials.
 
-To redeploy the current `master` manually, run the `Docker Build, Publish and Deploy` workflow with `workflow_dispatch`. To inspect the server without changing it:
+To deploy a feature branch, open `Docker Build, Publish and Deploy`, choose **Run workflow**, select that branch, and run it. Do not replace the image manually over SSH. To inspect the server without changing it:
 
 ```bash
 cd /home/beihai/docker/xboard

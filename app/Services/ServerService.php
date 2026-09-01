@@ -294,7 +294,7 @@ class ServerService
             ],
             'vless' => [
                 ...$baseConfig,
-                'tls' => (int) $protocolSettings['tls'],
+                'tls' => (int) ($protocolSettings['server_tls'] ?? $protocolSettings['tls']),
                 'flow' => $protocolSettings['flow'],
                 'decryption' => match (data_get($protocolSettings, 'encryption.enabled')) {
                     true => data_get($protocolSettings, 'encryption.decryption'),

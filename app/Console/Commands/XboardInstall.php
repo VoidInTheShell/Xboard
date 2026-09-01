@@ -48,13 +48,14 @@ class XboardInstall extends Command
      *
      * @return mixed
      */
-    public function handle()
+    public function handle(): int
     {
         try {
             $isDocker = file_exists('/.dockerenv');
             $enableSqlite = getenv('ENABLE_SQLITE', false);
             $enableRedis = getenv('ENABLE_REDIS', false);
             $adminAccount = getenv('ADMIN_ACCOUNT', false);
+            $adminPassword = $this->getEnvOrFile('ADMIN_PASSWORD');
             $this->info("__    __ ____                      _  ");
             $this->info("\ \  / /| __ )  ___   __ _ _ __ __| | ");
             $this->info(" \ \/ / | __ \ / _ \ / _` | '__/ _` | ");
@@ -69,11 +70,11 @@ class XboardInstall extends Command
                 $this->warn("如需重新安装请清空目录下 .env 文件的内容（Docker安装方式不可以删除此文件）");
                 $this->warn("快捷清空.env命令：");
                 note('rm .env && touch .env');
-                return;
+                return self::SUCCESS;
             }
             if (is_dir(base_path() . '/.env')) {
                 $this->error('😔：安装失败，Docker环境下安装请保留空的 .env 文件');
-                return;
+                return self::FAILURE;
             }
             // 选择数据库类型
             $dbType = $enableSqlite ? 'sqlite' : select(
@@ -95,7 +96,15 @@ class XboardInstall extends Command
             };
 
             if (is_null($envConfig)) {
-                return; // 用户选择退出安装
+                return self::FAILURE; // 用户选择退出安装
+            }
+            $appEnv = getenv('APP_ENV', false);
+            $appUrl = getenv('APP_URL', false);
+            if ($appEnv !== false && $appEnv !== '') {
+                $envConfig['APP_ENV'] = $appEnv;
+            }
+            if ($appUrl !== false && $appUrl !== '') {
+                $envConfig['APP_URL'] = $appUrl;
             }
             $envConfig['APP_KEY'] = 'base64:' . base64_encode(Encrypter::generateKey('AES-256-CBC'));
             $isReidsValid = false;
@@ -147,7 +156,8 @@ class XboardInstall extends Command
                     default => null,
                 }
             );
-            $password = Helper::guid(false);
+            $passwordWasProvided = $adminPassword !== false && $adminPassword !== '';
+            $password = $passwordWasProvided ? $adminPassword : Helper::guid(false);
             $this->saveToEnv($envConfig);
 
             $installDriverOverrides = [
@@ -180,7 +190,11 @@ class XboardInstall extends Command
 
             $this->info('🎉：一切就绪');
             $this->info("管理员邮箱：{$email}");
-            $this->info("管理员密码：{$password}");
+            if ($passwordWasProvided) {
+                $this->info('管理员密码：已通过外部密钥设置（不回显）');
+            } else {
+                $this->info("管理员密码：{$password}");
+            }
 
             $defaultSecurePath = hash('crc32b', config('app.key'));
             $this->info("访问 http(s)://你的站点/{$defaultSecurePath} 进入管理面板，你可以在用户中心修改你的密码。");
@@ -191,8 +205,10 @@ class XboardInstall extends Command
                 unset($_ENV[$key], $_SERVER[$key]);
             }
             Artisan::call('config:clear');
+            return self::SUCCESS;
         } catch (\Exception $e) {
             $this->error($e);
+            return self::FAILURE;
         }
     }
 
@@ -208,6 +224,25 @@ class XboardInstall extends Command
         $user->token = Helper::guid();
         $user->is_admin = 1;
         return $user->save();
+    }
+
+    private function getEnvOrFile(string $name): string|false
+    {
+        $file = getenv($name . '_FILE', false);
+        if ($file !== false && $file !== '') {
+            if (!is_readable($file)) {
+                throw new \RuntimeException("Secret file for {$name} is not readable");
+            }
+
+            $value = file_get_contents($file);
+            if ($value === false) {
+                throw new \RuntimeException("Secret file for {$name} could not be read");
+            }
+
+            return rtrim($value, "\r\n");
+        }
+
+        return getenv($name, false);
     }
 
     private function set_env_var($key, $value)

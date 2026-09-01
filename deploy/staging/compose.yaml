@@ -1,0 +1,114 @@
+name: gjhk-xboard
+
+x-xboard-volumes: &xboard-volumes
+  - ./.env:/www/.env
+  - ./data:/www/.docker/.data
+  - ./logs:/www/storage/logs
+  - ./themes:/www/storage/theme
+  - ./plugins:/www/plugins
+  - redis-data:/data
+
+services:
+  xboard:
+    image: ${XBOARD_IMAGE:?XBOARD_IMAGE is required}
+    container_name: xboard-app
+    restart: unless-stopped
+    init: true
+    expose:
+      - "7001"
+    volumes: *xboard-volumes
+    environment:
+      RESOURCE_PROFILE: minimal
+      ENABLE_WEB: "true"
+      ENABLE_HORIZON: "true"
+      ENABLE_WS_SERVER: "true"
+      ENABLE_CADDY: "true"
+      docker: "true"
+    networks:
+      - xboard-internal
+    mem_limit: 448m
+    mem_reservation: 256m
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:7001/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  bootstrap:
+    image: ${XBOARD_IMAGE:?XBOARD_IMAGE is required}
+    profiles: ["bootstrap"]
+    restart: "no"
+    init: true
+    volumes: *xboard-volumes
+    environment:
+      APP_ENV: staging
+      APP_URL: ${STAGING_PANEL_URL:?STAGING_PANEL_URL is required}
+      ENABLE_SQLITE: "true"
+      ENABLE_REDIS: "true"
+      ADMIN_ACCOUNT: ${STAGING_ADMIN_ACCOUNT:?STAGING_ADMIN_ACCOUNT is required}
+      ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+      SERVER_TOKEN_FILE: /run/secrets/server_token
+      STAGING_BOOTSTRAP_CONFIRM: "1"
+      STAGING_PANEL_URL: ${STAGING_PANEL_URL:?STAGING_PANEL_URL is required}
+      STAGING_NODE_NAME: ${STAGING_NODE_NAME:-US2 Staging}
+      STAGING_NODE_HOST: ${STAGING_NODE_HOST:?STAGING_NODE_HOST is required}
+      STAGING_NODE_ID: ${STAGING_NODE_ID:-1}
+      STAGING_NODE_PUBLIC_PORT: ${STAGING_NODE_PUBLIC_PORT:-443}
+      STAGING_NODE_LISTEN_PORT: ${STAGING_NODE_LISTEN_PORT:-30080}
+      STAGING_NODE_WS_PATH: ${STAGING_NODE_WS_PATH:-/xboard-staging-ws}
+      docker: "true"
+    secrets:
+      - admin_password
+      - server_token
+    networks:
+      - xboard-internal
+
+  theme:
+    image: ${DK_THEME_IMAGE:?DK_THEME_IMAGE is required}
+    container_name: xboard-theme
+    restart: unless-stopped
+    depends_on:
+      xboard:
+        condition: service_healthy
+    expose:
+      - "80"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    networks:
+      - xboard-internal
+      - appnet
+    mem_limit: 32m
+    mem_reservation: 8m
+    cpus: 0.25
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  redis-data:
+
+networks:
+  xboard-internal:
+    internal: true
+  appnet:
+    external: true
+
+secrets:
+  admin_password:
+    file: ./secrets/admin_password
+  server_token:
+    file: ./secrets/server_token

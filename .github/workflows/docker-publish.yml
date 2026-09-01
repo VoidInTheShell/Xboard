@@ -1,100 +1,231 @@
-name: Docker Build and Publish
+name: Docker Build, Publish and Deploy
 
 on:
   push:
     branches: ["master", "new-dev"]
+  pull_request:
+    branches: ["master", "new-dev"]
   workflow_dispatch:
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: voidintheshell/xboard
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  test-image:
+    name: Build and smoke-test image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          submodules: recursive
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build local smoke-test image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: xboard-ci:${{ github.sha }}
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify Artisan boot and staging command registration
+        run: |
+          docker run --rm xboard-ci:${GITHUB_SHA} php artisan list --format=json > /tmp/artisan.json
+          grep -q 'xboard:staging-bootstrap' /tmp/artisan.json
+
+  build-and-push:
+    name: Publish multi-architecture image
+    if: github.event_name != 'pull_request'
+    needs: test-image
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write
-
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 1 
+          submodules: recursive
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
-          platforms: 'arm64,amd64'
+          platforms: arm64,amd64
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
-          driver-opts: |
-            image=moby/buildkit:v0.20.0
-            network=host
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - name: Free Disk Space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune -af
-
-      - name: Login to registry
-        uses: docker/login-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Generate image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
+            type=sha,format=long,prefix=sha-
             type=ref,event=branch
-            type=sha,format=short,prefix=,enable=true
-            type=raw,value=new,enable=${{ github.ref == 'refs/heads/master' }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
-            type=raw,value=${{ steps.get_version.outputs.version }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
 
-      - name: Get version
-        id: get_version
-        run: echo "version=$(git describe --tags --always)" >> $GITHUB_OUTPUT
-
-      - name: Update version in app.php
-        run: |
-          VERSION=$(date '+%Y%m%d')-$(git rev-parse --short HEAD)
-          sed -i "s/'version' => '.*'/'version' => '$VERSION'/g" config/app.php
-          echo "Updated version to: $VERSION"
-
-      - name: Build and push
-        id: build-and-push
-        uses: docker/build-push-action@v5
+      - name: Build and push image
+        id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            BUILDKIT_INLINE_CACHE=1
-            BUILDKIT_MULTI_PLATFORM=1
-            CACHEBUST=${{ github.sha }}
-            REPO_URL=https://github.com/${{ github.repository }}
-            BRANCH_NAME=${{ github.ref_name }}
-          provenance: false
-          outputs: type=registry,push=true
-          allow: |
-            network.host
+            APP_VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
 
+  deploy-staging:
+    name: Rebuild GJHK staging
+    if: >-
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_PANEL_URL }}
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SSH_HOST: ${{ vars.STAGING_SSH_HOST }}
+      SSH_PORT: ${{ vars.STAGING_SSH_PORT }}
+      SSH_USER: ${{ vars.STAGING_SSH_USER }}
+      PANEL_URL: ${{ vars.STAGING_PANEL_URL }}
+      NODE_HOST: ${{ vars.STAGING_NODE_HOST }}
+      NODE_ID: ${{ vars.STAGING_NODE_ID }}
+      NODE_PUBLIC_PORT: ${{ vars.STAGING_NODE_PUBLIC_PORT }}
+      NODE_LISTEN_PORT: ${{ vars.STAGING_NODE_LISTEN_PORT }}
+      NODE_WS_PATH: ${{ vars.STAGING_NODE_WS_PATH }}
+      ADMIN_ACCOUNT: ${{ secrets.STAGING_ADMIN_ACCOUNT }}
+      ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+      SERVER_TOKEN: ${{ secrets.STAGING_SERVER_TOKEN }}
+      SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      XBOARD_IMAGE: ghcr.io/voidintheshell/xboard@${{ needs.build-and-push.outputs.digest }}
+      DK_THEME_IMAGE: ghcr.io/voidintheshell/dk_theme:main
+      REMOTE_BUNDLE: /home/beihai/docker/.incoming/xboard-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout deployment files
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Validate staging configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          : "${SSH_HOST:?STAGING_SSH_HOST is required}"
+          : "${SSH_PORT:?STAGING_SSH_PORT is required}"
+          : "${SSH_USER:?STAGING_SSH_USER is required}"
+          : "${PANEL_URL:?STAGING_PANEL_URL is required}"
+          : "${NODE_HOST:?STAGING_NODE_HOST is required}"
+          : "${NODE_ID:?STAGING_NODE_ID is required}"
+          : "${NODE_PUBLIC_PORT:?STAGING_NODE_PUBLIC_PORT is required}"
+          : "${NODE_LISTEN_PORT:?STAGING_NODE_LISTEN_PORT is required}"
+          : "${NODE_WS_PATH:?STAGING_NODE_WS_PATH is required}"
+          : "${ADMIN_ACCOUNT:?STAGING_ADMIN_ACCOUNT is required}"
+          : "${ADMIN_PASSWORD:?STAGING_ADMIN_PASSWORD is required}"
+          : "${SERVER_TOKEN:?STAGING_SERVER_TOKEN is required}"
+          : "${SSH_PRIVATE_KEY:?STAGING_SSH_PRIVATE_KEY is required}"
+          : "${SSH_KNOWN_HOSTS:?STAGING_SSH_KNOWN_HOSTS is required}"
+          if [ "${#SERVER_TOKEN}" -lt 16 ]; then
+            echo "STAGING_SERVER_TOKEN must contain at least 16 characters" >&2
+            exit 1
+          fi
+
+      - name: Prepare SSH and deployment bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          SSH_DIR="${RUNNER_TEMP}/deploy-ssh"
+          install -d -m 700 "${SSH_DIR}"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > "${SSH_DIR}/id_ed25519"
+          printf '%s\n' "${SSH_KNOWN_HOSTS}" > "${SSH_DIR}/known_hosts"
+
+          BUNDLE_DIR="${RUNNER_TEMP}/xboard-bundle"
+          install -d -m 700 "${BUNDLE_DIR}"
+          install -m 644 deploy/staging/compose.yaml "${BUNDLE_DIR}/compose.yaml"
+          install -m 700 deploy/staging/deploy.sh "${BUNDLE_DIR}/deploy.sh"
+          printf '%s' "${ADMIN_PASSWORD}" > "${BUNDLE_DIR}/admin_password"
+          printf '%s' "${SERVER_TOKEN}" > "${BUNDLE_DIR}/server_token"
+          chmod 600 "${BUNDLE_DIR}/admin_password" "${BUNDLE_DIR}/server_token"
+          {
+            printf 'XBOARD_IMAGE=%s\n' "${XBOARD_IMAGE}"
+            printf 'DK_THEME_IMAGE=%s\n' "${DK_THEME_IMAGE}"
+            printf 'STAGING_ADMIN_ACCOUNT=%s\n' "${ADMIN_ACCOUNT}"
+            printf 'STAGING_PANEL_URL=%s\n' "${PANEL_URL}"
+            printf 'STAGING_NODE_NAME=%s\n' 'US2 Staging'
+            printf 'STAGING_NODE_HOST=%s\n' "${NODE_HOST}"
+            printf 'STAGING_NODE_ID=%s\n' "${NODE_ID}"
+            printf 'STAGING_NODE_PUBLIC_PORT=%s\n' "${NODE_PUBLIC_PORT}"
+            printf 'STAGING_NODE_LISTEN_PORT=%s\n' "${NODE_LISTEN_PORT}"
+            printf 'STAGING_NODE_WS_PATH=%s\n' "${NODE_WS_PATH}"
+          } > "${BUNDLE_DIR}/deploy.env"
+          chmod 600 "${BUNDLE_DIR}/deploy.env"
+
+      - name: Upload and deploy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SSH_TARGET="${SSH_USER}@${SSH_HOST}"
+          SSH_DIR="${RUNNER_TEMP}/deploy-ssh"
+          SSH_ARGS=(-i "${SSH_DIR}/id_ed25519" -p "${SSH_PORT}" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${SSH_DIR}/known_hosts")
+          SCP_ARGS=(-i "${SSH_DIR}/id_ed25519" -P "${SSH_PORT}" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${SSH_DIR}/known_hosts")
+
+          ssh "${SSH_ARGS[@]}" "${SSH_TARGET}" "install -d -m 700 '${REMOTE_BUNDLE}'"
+          scp "${SCP_ARGS[@]}" "${RUNNER_TEMP}/xboard-bundle/"* "${SSH_TARGET}:${REMOTE_BUNDLE}/"
+          printf '%s\n' "${GHCR_TOKEN}" | ssh "${SSH_ARGS[@]}" "${SSH_TARGET}" "chmod 700 '${REMOTE_BUNDLE}/deploy.sh' && '${REMOTE_BUNDLE}/deploy.sh' '${REMOTE_BUNDLE}' '${GITHUB_ACTOR}'"
+
+      - name: Verify public staging entrypoint
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 "${PANEL_URL}/healthz" > /dev/null
+          curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 "${PANEL_URL}/" > /dev/null
+
+      - name: Remove sensitive deployment bundle
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          SSH_DIR="${RUNNER_TEMP}/deploy-ssh"
+          if [ -f "${SSH_DIR}/id_ed25519" ] && [ -n "${SSH_HOST:-}" ] && [ -n "${REMOTE_BUNDLE:-}" ]; then
+            ssh -i "${SSH_DIR}/id_ed25519" -p "${SSH_PORT}" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${SSH_DIR}/known_hosts" "${SSH_USER}@${SSH_HOST}" "case '${REMOTE_BUNDLE}' in /home/beihai/docker/.incoming/xboard-*) rm -rf -- '${REMOTE_BUNDLE}' ;; *) exit 1 ;; esac"
+          fi
+          rm -rf -- "${RUNNER_TEMP}/xboard-bundle" "${SSH_DIR}"

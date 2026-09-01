@@ -236,6 +236,9 @@ class Server extends Model
         ],
         self::TYPE_VLESS => [
             'tls' => ['type' => 'integer', 'default' => 0],
+            // Allows a reverse proxy to terminate public TLS while the node
+            // listens for plain WebSocket traffic on its private port.
+            'server_tls' => ['type' => 'integer', 'default' => null],
             'tls_settings' => self::TLS_SETTINGS_CONFIGURATION,
             'flow' => ['type' => 'string', 'default' => null],
             'encryption' => [

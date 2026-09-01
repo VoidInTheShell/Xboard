@@ -75,6 +75,7 @@ class ServerSave extends FormRequest
         ],
         'vless' => [
             'tls' => 'required|integer',
+            'server_tls' => 'nullable|integer|in:0,1',
             'network' => 'required|string',
             'network_settings' => 'nullable|array',
             'flow' => 'nullable|string',

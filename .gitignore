@@ -29,6 +29,7 @@ frontend
 docker-compose.yaml
 bun.lockb
 compose.yaml
+!deploy/staging/compose.yaml
 compose.host.yaml
 compose.split.yaml
 .scribe

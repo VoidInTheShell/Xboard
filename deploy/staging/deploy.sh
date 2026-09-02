@@ -87,7 +87,7 @@ if [ -f "$TARGET_DIR/compose.yaml" ]; then
     fi
 fi
 
-for runtime_name in data logs plugins themes secrets backups theme-dist; do
+for runtime_name in data logs plugins themes uploads secrets backups theme-dist; do
     runtime_path=$(realpath -m "$TARGET_DIR/$runtime_name")
     case "$runtime_path" in
         "$EXPECTED_TARGET"/*) sudo -n rm -rf -- "$runtime_path" ;;
@@ -107,7 +107,7 @@ find "$TARGET_DIR" -maxdepth 1 -type f -name 'dk-theme-*-production.tar.gz' -del
 
 sudo -n chown -R beihai:beihai "$TARGET_DIR"
 install -d -m 700 "$TARGET_DIR/secrets"
-install -d -m 755 "$TARGET_DIR/data" "$TARGET_DIR/logs" "$TARGET_DIR/plugins" "$TARGET_DIR/themes"
+install -d -m 755 "$TARGET_DIR/data" "$TARGET_DIR/logs" "$TARGET_DIR/plugins" "$TARGET_DIR/themes" "$TARGET_DIR/uploads"
 install -m 644 "$RESOLVED_BUNDLE/compose.yaml" "$TARGET_DIR/compose.yaml"
 install -m 600 "$RESOLVED_BUNDLE/deploy.env" "$TARGET_DIR/.deploy.env"
 install -m 600 "$RESOLVED_BUNDLE/admin_password" "$TARGET_DIR/secrets/admin_password"

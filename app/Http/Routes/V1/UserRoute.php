@@ -2,6 +2,7 @@
 namespace App\Http\Routes\V1;
 
 use App\Http\Controllers\V1\User\CommController;
+use App\Http\Controllers\V1\User\ClientController;
 use App\Http\Controllers\V1\User\CouponController;
 use App\Http\Controllers\V1\User\GiftCardController;
 use App\Http\Controllers\V1\User\InviteController;
@@ -36,6 +37,8 @@ class UserRoute
             $router->post('/getQuickLoginUrl', [UserController::class, 'getQuickLoginUrl']);
             $router->get('/getActiveSession', [UserController::class, 'getActiveSession']);
             $router->post('/removeActiveSession', [UserController::class, 'removeActiveSession']);
+            // Client catalog
+            $router->get('/client/fetch', [ClientController::class, 'fetch']);
             // Order
             $router->post('/order/save', [OrderController::class, 'save']);
             $router->post('/order/checkout', [OrderController::class, 'checkout']);

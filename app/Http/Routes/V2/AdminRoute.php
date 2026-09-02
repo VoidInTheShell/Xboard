@@ -2,6 +2,7 @@
 namespace App\Http\Routes\V2;
 
 use App\Http\Controllers\V2\Admin\ConfigController;
+use App\Http\Controllers\V2\Admin\ClientController;
 use App\Http\Controllers\V2\Admin\MailTemplateController;
 use App\Http\Controllers\V2\Admin\PlanController;
 use App\Http\Controllers\V2\Admin\Server\GroupController;
@@ -40,6 +41,16 @@ class AdminRoute
                 $router->get('/getThemeTemplate', [ConfigController::class, 'getThemeTemplate']);
                 $router->post('/setTelegramWebhook', [ConfigController::class, 'setTelegramWebhook']);
                 $router->post('/testSendMail', [ConfigController::class, 'testSendMail']);
+            });
+
+            // Client catalog
+            $router->group([
+                'prefix' => 'client'
+            ], function ($router) {
+                $router->get('/fetch', [ClientController::class, 'fetch']);
+                $router->post('/save', [ClientController::class, 'save']);
+                $router->post('/drop', [ClientController::class, 'drop']);
+                $router->post('/sort', [ClientController::class, 'sort']);
             });
 
             // Mail Templates

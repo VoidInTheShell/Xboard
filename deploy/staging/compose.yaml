@@ -4,6 +4,7 @@ x-xboard-volumes: &xboard-volumes
   - ./.env:/www/.env
   - ./data:/www/.docker/.data
   - ./logs:/www/storage/logs
+  - ./uploads:/www/storage/app/public
   - ./themes:/www/storage/theme
   - ./plugins:/www/plugins
   - redis-data:/data

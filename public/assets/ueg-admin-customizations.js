@@ -1160,6 +1160,17 @@ function restoreClientSettingsSource() {
   if (!CLIENT_PREVIEW_MODE) document.getElementById(CLIENT_SETTINGS_ROOT_ID)?.remove();
 }
 
+function findClientSettingsSource() {
+  const legacyForm = document.querySelector("#root form");
+  if (legacyForm) return legacyForm;
+
+  const heading = [...document.querySelectorAll("#root h1, #root h2, #root h3")]
+    .find((element) => (element.textContent || "").trim() === "客户端设置");
+  if (!heading) return null;
+
+  return heading.closest(".space-y-6") || heading.parentElement?.parentElement || null;
+}
+
 function injectClientSettings() {
   renameClientSettingsNavigation();
   if (!isClientSettingsRoute()) {
@@ -1176,12 +1187,12 @@ function injectClientSettings() {
       if (!root) return;
       root.id = CLIENT_SETTINGS_ROOT_ID;
     } else {
-      const sourceForm = document.querySelector("#root form");
-      if (!sourceForm?.parentElement) return;
-      sourceForm.classList.add(CLIENT_SOURCE_HIDDEN_CLASS);
+      const sourcePanel = findClientSettingsSource();
+      if (!sourcePanel?.parentElement) return;
+      sourcePanel.classList.add(CLIENT_SOURCE_HIDDEN_CLASS);
       root = document.createElement("div");
       root.id = CLIENT_SETTINGS_ROOT_ID;
-      sourceForm.before(root);
+      sourcePanel.before(root);
     }
     renderClientSettingsPage(root);
     if (!CLIENT_PREVIEW_MODE) {

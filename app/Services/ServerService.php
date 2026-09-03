@@ -320,6 +320,7 @@ class ServerService
                         2 => [
                             'obfs' => $protocolSettings['obfs']['open'] ? $protocolSettings['obfs']['type'] : null,
                             'obfs-password' => $protocolSettings['obfs']['password'] ?? null,
+                            'masquerade' => data_get($protocolSettings, 'masquerade'),
                         ],
                         default => [],
                     },

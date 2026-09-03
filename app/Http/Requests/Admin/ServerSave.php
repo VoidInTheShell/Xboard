@@ -72,6 +72,10 @@ class ServerSave extends FormRequest
             'bandwidth.up' => 'nullable|integer',
             'bandwidth.down' => 'nullable|integer',
             'hop_interval' => 'integer|nullable',
+            'masquerade' => 'nullable|array',
+            'masquerade.type' => 'required_with:protocol_settings.masquerade|string|in:proxy',
+            'masquerade.url' => 'required_if:protocol_settings.masquerade.type,proxy|string|url|starts_with:http://,https://|max:2048',
+            'masquerade.rewrite_host' => 'nullable|boolean',
         ],
         'vless' => [
             'tls' => 'required|integer',

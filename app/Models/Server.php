@@ -281,6 +281,15 @@ class Server extends Model
                 ]
             ],
             'tls' => self::TLS_CONFIGURATION,
+            'masquerade' => [
+                'type' => 'object',
+                'default' => null,
+                'fields' => [
+                    'type' => ['type' => 'string', 'default' => null],
+                    'url' => ['type' => 'string', 'default' => null],
+                    'rewrite_host' => ['type' => 'boolean', 'default' => false],
+                ],
+            ],
             'hop_interval' => ['type' => 'integer', 'default' => null]
         ],
         self::TYPE_TUIC => [

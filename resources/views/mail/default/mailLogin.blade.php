@@ -19,7 +19,7 @@
             <tr><td style="font-size:22px;font-weight:700;color:#18181b;padding-bottom:8px;">登录确认</td></tr>
             <tr><td style="font-size:15px;color:#52525b;line-height:1.7;padding-bottom:28px;">点击下方按钮登录到 {{$name}}，链接有效期 5 分钟。如非本人操作，请忽略此邮件。</td></tr>
             <tr><td align="center" style="padding-bottom:28px;">
-                <a href="{{$link}}" style="display:inline-block;background:#18181b;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:14px 36px;border-radius:8px;">确认登录</a>
+                <a href="{{$link}}" style="display:inline-block;background:#18181b;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;white-space:nowrap;padding:14px 36px;border-radius:8px;">确认登录</a>
             </td></tr>
             <tr><td style="font-size:13px;color:#a1a1aa;line-height:1.5;">如果按钮无法点击，请复制以下链接到浏览器中打开：</td></tr>
             <tr><td style="font-size:13px;color:#71717a;line-height:1.5;word-break:break-all;padding-top:8px;">{{$link}}</td></tr>

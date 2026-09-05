@@ -36,6 +36,9 @@ class ClientCatalogTest extends TestCase
             ->assertJsonPath('data.clients.0.slug', 'clash-party')
             ->assertJsonPath('data.clients.0.is_builtin', true)
             ->assertJsonPath('data.clients.0.subscription_template', 'clashmeta')
+            ->assertJsonCount(6, 'data.platform_defaults')
+            ->assertJsonPath('data.platform_defaults.0.platform', 'windows')
+            ->assertJsonPath('data.platform_defaults.0.client_slug', 'clash-party')
             ->assertJsonPath('data.device_platforms.desktop.0', 'windows');
 
         $flClash = collect($response->json('data.clients'))->firstWhere('slug', 'flclash');
@@ -119,6 +122,110 @@ class ClientCatalogTest extends TestCase
         $this->assertSame($windowsBefore, $this->orderedIds($updated, 'desktop', 'windows'));
     }
 
+    public function test_administrator_can_set_one_platform_default_and_user_receives_it(): void
+    {
+        Sanctum::actingAs($this->makeUser(['is_admin' => true]));
+        $fetchPath = $this->routePath(AdminClientController::class . '@fetch');
+        $defaultPath = $this->routePath(AdminClientController::class . '@setDefault');
+        $clients = $this->getJson($fetchPath)->assertOk()->json('data.clients');
+        $clashVerge = collect($clients)->firstWhere('slug', 'clash-verge');
+
+        $this->postJson($defaultPath, [
+            'device_type' => 'desktop',
+            'platform' => 'windows',
+            'client_app_id' => $clashVerge['id'],
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.client_app_id', $clashVerge['id'])
+            ->assertJsonPath('data.is_manual', true)
+            ->assertJsonPath('data.is_fallback', false);
+
+        $updated = $this->getJson($fetchPath)->assertOk();
+        $windowsDefault = collect($updated->json('data.platform_defaults'))
+            ->first(fn(array $item) => $item['device_type'] === 'desktop' && $item['platform'] === 'windows');
+        $this->assertSame($clashVerge['id'], $windowsDefault['client_app_id']);
+        $this->assertTrue($windowsDefault['is_manual']);
+
+        $clashVergeAfter = collect($updated->json('data.clients'))->firstWhere('slug', 'clash-verge');
+        $windowsScope = collect($clashVergeAfter['scopes'])->first(fn(array $scope) => (
+            $scope['device_type'] === 'desktop' && $scope['platform'] === 'windows'
+        ));
+        $this->assertTrue($windowsScope['is_default']);
+        $this->assertDatabaseCount('v2_client_app_recommendation', 5);
+    }
+
+    public function test_default_recommendation_falls_back_after_disable_and_delete(): void
+    {
+        Sanctum::actingAs($this->makeUser(['is_admin' => true]));
+        $fetchPath = $this->routePath(AdminClientController::class . '@fetch');
+        $savePath = $this->routePath(AdminClientController::class . '@save');
+        $defaultPath = $this->routePath(AdminClientController::class . '@setDefault');
+        $dropPath = $this->routePath(AdminClientController::class . '@drop');
+        $clients = $this->getJson($fetchPath)->assertOk()->json('data.clients');
+        $party = collect($clients)->firstWhere('slug', 'clash-party');
+        $clashVerge = collect($clients)->firstWhere('slug', 'clash-verge');
+
+        $this->postJson($defaultPath, [
+            'device_type' => 'desktop',
+            'platform' => 'windows',
+            'client_app_id' => $clashVerge['id'],
+        ])->assertOk();
+
+        $payload = $this->clientPayloadFromRecord($clashVerge);
+        $payload['is_enabled'] = false;
+        $this->postJson($savePath, $payload)
+            ->assertOk()
+            ->assertJsonPath('data.is_enabled', false);
+
+        $afterDisable = $this->getJson($fetchPath)->assertOk();
+        $windowsDefault = collect($afterDisable->json('data.platform_defaults'))
+            ->first(fn(array $item) => $item['device_type'] === 'desktop' && $item['platform'] === 'windows');
+        $this->assertSame('clash-party', $windowsDefault['client_slug']);
+        $this->assertTrue($windowsDefault['is_fallback']);
+        $this->assertFalse(collect($afterDisable->json('data.clients'))->firstWhere('slug', 'clash-verge')['scopes'][0]['is_default'] ?? false);
+
+        $this->postJson($dropPath, ['id' => $party['id']])->assertOk();
+        $afterDelete = $this->getJson($fetchPath)->assertOk();
+        $windowsDefaultAfterDelete = collect($afterDelete->json('data.platform_defaults'))
+            ->first(fn(array $item) => $item['device_type'] === 'desktop' && $item['platform'] === 'windows');
+        $this->assertSame('flclash', $windowsDefaultAfterDelete['client_slug']);
+        $this->assertTrue($windowsDefaultAfterDelete['is_fallback']);
+    }
+
+    public function test_default_client_must_belong_to_selected_platform(): void
+    {
+        Sanctum::actingAs($this->makeUser(['is_admin' => true]));
+        $fetchPath = $this->routePath(AdminClientController::class . '@fetch');
+        $defaultPath = $this->routePath(AdminClientController::class . '@setDefault');
+        $clients = $this->getJson($fetchPath)->assertOk()->json('data.clients');
+        $hiddify = collect($clients)->firstWhere('slug', 'hiddify');
+
+        $this->postJson($defaultPath, [
+            'device_type' => 'desktop',
+            'platform' => 'windows',
+            'client_app_id' => $hiddify['id'],
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['client_app_id']);
+    }
+
+    public function test_disabled_client_is_not_returned_to_users(): void
+    {
+        Sanctum::actingAs($this->makeUser(['is_admin' => true]));
+        $fetchPath = $this->routePath(AdminClientController::class . '@fetch');
+        $savePath = $this->routePath(AdminClientController::class . '@save');
+        $clients = $this->getJson($fetchPath)->assertOk()->json('data.clients');
+        $clashVerge = collect($clients)->firstWhere('slug', 'clash-verge');
+        $payload = $this->clientPayloadFromRecord($clashVerge);
+        $payload['is_enabled'] = false;
+        $this->postJson($savePath, $payload)->assertOk();
+
+        Sanctum::actingAs($this->makeUser());
+        $userResponse = $this->getJson($this->routePath(UserClientController::class . '@fetch'))
+            ->assertOk();
+        $this->assertNull(collect($userResponse->json('data.clients'))->firstWhere('slug', 'clash-verge'));
+    }
+
     public function test_logo_upload_accepts_raster_image_and_rejects_svg(): void
     {
         Storage::fake('public');
@@ -182,6 +289,27 @@ class ClientCatalogTest extends TestCase
                 'device_type' => 'desktop',
                 'platform' => 'windows',
             ]],
+        ];
+    }
+
+    private function clientPayloadFromRecord(array $client): array
+    {
+        return [
+            'id' => $client['id'],
+            'name' => $client['name'],
+            'description' => $client['description'],
+            'logo_mode' => $client['logo_mode'],
+            'logo_url' => $client['logo_mode'] === 'url' ? $client['logo_url'] : null,
+            'tags' => $client['tags'],
+            'download_url' => $client['download_url'],
+            'docs_url' => $client['docs_url'],
+            'quick_import_enabled' => $client['quick_import_enabled'],
+            'quick_import_url' => $client['quick_import_url'],
+            'subscription_template' => $client['subscription_template'],
+            'scopes' => collect($client['scopes'])->map(fn(array $scope) => [
+                'device_type' => $scope['device_type'],
+                'platform' => $scope['platform'],
+            ])->all(),
         ];
     }
 

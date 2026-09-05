@@ -51,6 +51,7 @@ class AdminRoute
                 $router->post('/save', [ClientController::class, 'save']);
                 $router->post('/drop', [ClientController::class, 'drop']);
                 $router->post('/sort', [ClientController::class, 'sort']);
+                $router->post('/default', [ClientController::class, 'setDefault']);
             });
 
             // Mail Templates

@@ -22,6 +22,7 @@ class ClientController extends Controller
 
         return $this->success([
             'clients' => $this->catalog->listForUser($subscribeUrl),
+            'platform_defaults' => $this->catalog->platformDefaults(),
             'templates' => ClientCatalogService::TEMPLATES,
             'device_platforms' => ClientCatalogService::DEVICE_PLATFORMS,
         ]);

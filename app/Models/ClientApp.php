@@ -14,6 +14,7 @@ class ClientApp extends Model
     protected $casts = [
         'tags' => 'array',
         'quick_import_enabled' => 'boolean',
+        'is_enabled' => 'boolean',
         'is_builtin' => 'boolean',
     ];
 

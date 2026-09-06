@@ -9,6 +9,25 @@ class RequestLog
 {
     private const SENSITIVE_KEYS = ['password', 'token', 'secret', 'key', 'api_key'];
 
+    // Native config objects contain protocol-dependent credentials at arbitrary
+    // depths. Keep operation metadata, but never copy these payloads to audit logs.
+    private const PRIVATE_CONFIG_KEYS = ['xray_config', 'client_settings', 'cert_config', 'protocol_settings', 'credential', 'service_credential', 'config_patch', 'config_override', 'config'];
+
+    public static function redactRequestData(array $data): array
+    {
+        foreach ($data as $key => $value) {
+            $name = strtolower((string) $key);
+            if (in_array($name, self::PRIVATE_CONFIG_KEYS, true)
+                || preg_match('/password|token|secret|decryption|encryption|private.?key|cert_content|key_content|dns_env|auth_data|uuid/i', $name)
+                || in_array($name, self::SENSITIVE_KEYS, true)) {
+                $data[$key] = '[REDACTED]';
+            } elseif (is_array($value)) {
+                $data[$key] = self::redactRequestData($value);
+            }
+        }
+        return $data;
+    }
+
     public function handle($request, Closure $next)
     {
         if ($request->method() !== 'POST') {
@@ -24,7 +43,7 @@ class RequestLog
             }
 
             $action = $this->resolveAction($request->path());
-            $data = collect($request->all())->except(self::SENSITIVE_KEYS)->toArray();
+            $data = self::redactRequestData($request->all());
 
             AdminAuditLog::insert([
                 'admin_id' => $admin->id,

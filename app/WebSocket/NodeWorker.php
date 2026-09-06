@@ -366,7 +366,7 @@ class NodeWorker
         $channel = $prefix . 'node:push';
 
         $redis->subscribe([$channel], function ($chan, $message) {
-            $payload = json_decode($message, true);
+            $payload = self::decodePushPayload($message);
             if (!is_array($payload)) {
                 return;
             }
@@ -403,5 +403,58 @@ class NodeWorker
         });
 
         Log::info("[WS] Subscribed to Redis channel: {$channel}");
+    }
+
+    /**
+     * Decode a Redis push envelope for the Workerman dispatcher.
+     *
+     * Most event data is intentionally associative, but native xray_config is
+     * an object.  Decoding the whole envelope with the associative flag turns
+     * policy.levels.{"0": {...}} into a JSON array and the Node core then
+     * rejects an otherwise valid policy.  Reapply every native xray_config
+     * subtree from an object-preserving decode before dispatching either a
+     * single-node or machine-scoped event.
+     */
+    public static function decodePushPayload(string $message): ?array
+    {
+        try {
+            $payload = json_decode($message, true, 512, JSON_THROW_ON_ERROR);
+            $native = json_decode($message, false, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return null;
+        }
+        if (!is_array($payload) || !$native instanceof \stdClass) {
+            return null;
+        }
+        if (array_key_exists('data', $payload)) {
+            $payload['data'] = self::restoreNativeConfigObjects(
+                $native->data ?? null,
+                $payload['data'],
+            );
+        }
+        return $payload;
+    }
+
+    private static function restoreNativeConfigObjects(mixed $native, mixed $decoded): mixed
+    {
+        if ($native instanceof \stdClass && is_array($decoded)) {
+            foreach (get_object_vars($native) as $key => $value) {
+                if (!array_key_exists($key, $decoded)) continue;
+                if ($key === 'xray_config' && $value instanceof \stdClass) {
+                    $decoded[$key] = $value;
+                    continue;
+                }
+                $decoded[$key] = self::restoreNativeConfigObjects($value, $decoded[$key]);
+            }
+            return $decoded;
+        }
+        if (is_array($native) && is_array($decoded)) {
+            foreach ($native as $index => $value) {
+                if (array_key_exists($index, $decoded)) {
+                    $decoded[$index] = self::restoreNativeConfigObjects($value, $decoded[$index]);
+                }
+            }
+        }
+        return $decoded;
     }
 }

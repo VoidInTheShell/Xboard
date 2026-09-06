@@ -51,6 +51,7 @@ class MachineController extends Controller
 
         if (!empty($params['id'])) {
             $machine = ServerMachine::find($params['id']);
+            $wasActive = (bool) $machine->is_active;
             $update = ['name' => $params['name']];
             if (array_key_exists('notes', $params)) {
                 $update['notes'] = $params['notes'];
@@ -59,6 +60,14 @@ class MachineController extends Controller
                 $update['is_active'] = $params['is_active'];
             }
             $machine->update($update);
+            if (array_key_exists('is_active', $update)
+                && $wasActive !== (bool) $machine->is_active) {
+                // An active-state transition changes the machine's node set
+                // from the Node process' point of view.  Publish even when no
+                // node row changed: disabling sends an empty list, enabling
+                // sends the current enabled node list for recovery.
+                NodeSyncService::notifyMachineNodesChanged((int) $machine->id);
+            }
             return $this->success(true);
         }
 

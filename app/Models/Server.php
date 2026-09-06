@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Cache;
@@ -119,6 +120,15 @@ class Server extends Model
         'tags' => 'array',
         'protocol_settings' => 'array',
         'custom_outbounds' => 'array',
+        'xray_config' => 'object',
+        'outbound_bindings' => 'array',
+        'config_revision' => 'integer',
+        'xray_apply' => 'object',
+        // Public VLESS client values that accompany a native inbound.  Keep
+        // them out of protocol_settings so removing a native override can
+        // restore the original legacy baseline without a sticky decryption or
+        // flow value.
+        'xray_client_settings' => 'object',
         'custom_routes' => 'array',
         'cert_config' => 'array',
         'last_check_at' => 'integer',
@@ -380,6 +390,48 @@ class Server extends Model
         $castedSettings = $this->castSettingsWithConfig($value ?? [], $configs);
 
         $this->attributes['protocol_settings'] = json_encode($castedSettings);
+    }
+
+    /**
+     * Persist permission-group identifiers in one canonical form.  Older
+     * rows may contain JSON numbers while newer admin requests often submit
+     * strings; subscriptions and node notifications accept either on read,
+     * but writes should not create another mixed representation.
+     */
+    public function setGroupIdsAttribute($value): void
+    {
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            if (is_array($decoded)) {
+                $value = $decoded;
+            }
+        }
+        if (is_array($value)) {
+            $normalized = [];
+            foreach ($value as $groupId) {
+                if (is_int($groupId) || (is_string($groupId) && ctype_digit(trim($groupId)))) {
+                    $normalized[] = (string) (int) $groupId;
+                } else {
+                    $normalized[] = $groupId;
+                }
+            }
+            $value = array_values(array_unique($normalized, SORT_REGULAR));
+            $this->attributes['group_ids'] = json_encode($value);
+            return;
+        }
+        $this->attributes['group_ids'] = $value;
+    }
+
+    /** Match both legacy JSON numbers and canonical JSON strings. */
+    public function scopeForGroup(Builder $query, int|string $groupId): Builder
+    {
+        $value = trim((string) $groupId);
+        return $query->where(function (Builder $nested) use ($value) {
+            $nested->whereJsonContains('group_ids', $value);
+            if (ctype_digit($value)) {
+                $nested->orWhereJsonContains('group_ids', (int) $value);
+            }
+        });
     }
 
     public function generateServerPassword(User $user): string

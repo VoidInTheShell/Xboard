@@ -10,6 +10,7 @@ use App\Services\Plugin\HookManager;
 use App\Utils\CacheKey;
 use App\Utils\Helper;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Collection;
 
 class ServerService
@@ -54,7 +55,7 @@ class ServerService
      */
     public static function getAvailableServers(User $user): array
     {
-        $servers = Server::whereJsonContains('group_ids', (string) $user->group_id)
+        $servers = Server::forGroup($user->group_id)
             ->where('show', true)
             ->where(function ($query) {
                 $query->whereNull('transfer_enable')
@@ -66,6 +67,12 @@ class ServerService
             ->append(['last_check_at', 'last_push_at', 'online', 'is_online', 'available_status', 'cache_key', 'server_key']);
 
         $servers = collect($servers)->map(function ($server) use ($user) {
+            // Subscription renderers consume protocol_settings.  Keep this
+            // request-local view aligned with any native Xray inbound patch;
+            // the native xray_config column remains the only persisted source
+            // of truth and the published host/port are never taken from
+            // listen/listen_ip.
+            XrayConfigService::applySubscriptionProjection($server);
             // 判断动态端口
             if (str_contains($server->port, '-')) {
                 $port = $server->port;
@@ -217,6 +224,42 @@ class ServerService
      */
     public static function updateMetrics(Server $node, array $metrics): void
     {
+        if (is_array($metrics['config_apply'] ?? null)) {
+            $reported = $metrics['config_apply'];
+            $report = [];
+            foreach (['desired_revision', 'applied_revision'] as $field) {
+                if (array_key_exists($field, $reported) && is_numeric($reported[$field])) {
+                    $report[$field] = (int) $reported[$field];
+                }
+            }
+            foreach (['applied_hash', 'status', 'error', 'error_path', 'error_message', 'effective_hash'] as $field) {
+                if (array_key_exists($field, $reported) && $reported[$field] !== null) {
+                    $report[$field] = is_scalar($reported[$field]) ? (string) $reported[$field] : null;
+                }
+            }
+            $safeReasons = [
+                'listener_port_in_use', 'certificate_file_unreadable',
+                'unsupported_transport', 'unsupported_protocol', 'unsupported_field',
+                'missing_required_field', 'invalid_value', 'parse_error',
+                'instance_create_failed', 'activation_failed', 'rollback_failed', 'unknown',
+            ];
+            if (isset($reported['error_reason'])
+                && is_string($reported['error_reason'])
+                && in_array($reported['error_reason'], $safeReasons, true)) {
+                $report['error_reason'] = $reported['error_reason'];
+            }
+            $report = array_filter($report, static fn ($value) => $value !== null);
+            $report['reported_at'] = now()->timestamp;
+            Cache::put("xray_config_apply:{$node->id}", $report, 86400);
+            // Keep the last real node acknowledgement with the desired
+            // configuration. This is intentionally a narrow allow-list, so
+            // metrics or credentials cannot become part of the application
+            // receipt returned by the admin API.
+            DB::table('v2_server')->where('id', $node->id)->update([
+                'xray_apply' => json_encode($report, JSON_UNESCAPED_SLASHES),
+            ]);
+            $node->setAttribute('xray_apply', (object) $report);
+        }
         $nodeType = strtoupper($node->type);
         $nodeId = $node->id;
         $cacheTime = max(300, (int) admin_setting('server_push_interval', 60) * 3);
@@ -309,17 +352,22 @@ class ServerService
             'hysteria' => [
                 ...$baseConfig,
                 'server_port' => (int) $serverPort,
-                'version' => (int) $protocolSettings['version'],
+                // Older Hysteria rows may have null optional objects.  The
+                // node config contract treats those as omitted/defaulted
+                // values; never index into a null TLS/bandwidth/obfs value.
+                'version' => (int) data_get($protocolSettings, 'version', 2),
                 'host' => $host,
-                'server_name' => $protocolSettings['tls']['server_name'],
-                'tls_settings' => $protocolSettings['tls'],
-                'up_mbps' => (int) $protocolSettings['bandwidth']['up'],
-                'down_mbps' => (int) $protocolSettings['bandwidth']['down'],
-                ...match ((int) $protocolSettings['version']) {
-                        1 => ['obfs' => $protocolSettings['obfs']['password'] ?? null],
+                'server_name' => data_get($protocolSettings, 'tls.server_name'),
+                'tls_settings' => data_get($protocolSettings, 'tls'),
+                'up_mbps' => (int) data_get($protocolSettings, 'bandwidth.up', 0),
+                'down_mbps' => (int) data_get($protocolSettings, 'bandwidth.down', 0),
+                ...match ((int) data_get($protocolSettings, 'version', 2)) {
+                        1 => ['obfs' => data_get($protocolSettings, 'obfs.password')],
                         2 => [
-                            'obfs' => $protocolSettings['obfs']['open'] ? $protocolSettings['obfs']['type'] : null,
-                            'obfs-password' => $protocolSettings['obfs']['password'] ?? null,
+                            'obfs' => data_get($protocolSettings, 'obfs.open')
+                                ? data_get($protocolSettings, 'obfs.type')
+                                : null,
+                            'obfs-password' => data_get($protocolSettings, 'obfs.password'),
                             'masquerade' => data_get($protocolSettings, 'masquerade'),
                         ],
                         default => [],
@@ -392,6 +440,14 @@ class ServerService
             if (data_get($certConfig, 'cert_mode') !== 'none') {
                 $response['cert_config'] = $certConfig;
             }
+        }
+
+        if (XrayConfigService::supports($node) && ($node->xray_config !== null || $node->outbound_bindings !== null || ($node->machine_id && $node->machine?->xray_config !== null))) {
+            $native = XrayConfigService::effective($node);
+            $response['kernel_type'] = 'xray';
+            $response['xray_config'] = $native;
+            $response['config_revision'] = (int) ($node->config_revision ?? 0);
+            $response['config_hash'] = XrayConfigService::hash($native);
         }
 
         return $response;

@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\ServerSave;
 use App\Models\Server;
 use App\Models\ServerGroup;
 use App\Services\ServerService;
+use App\Services\XrayConfigService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -57,6 +58,7 @@ class ManageController extends Controller
             if (!$server) {
                 return $this->fail([400202, '服务器不存在']);
             }
+            $this->validateServerCandidate($server, $params);
             try {
                 $server->update($params);
                 return $this->success(true);
@@ -66,6 +68,7 @@ class ManageController extends Controller
             }
         }
 
+        $this->validateServerCandidate(null, $params);
         try {
             Server::create($params);
             return $this->success(true);
@@ -73,6 +76,27 @@ class ManageController extends Controller
             Log::error($e);
             return $this->fail([500, '创建失败']);
         }
+    }
+
+    /** Validate legacy server fields and certificate changes before writing. */
+    private function validateServerCandidate(?Server $server, array $params): void
+    {
+        $candidate = $server ? clone $server : new Server();
+        $candidate->fill($params);
+        if ($server && $server->relationLoaded('machine')) {
+            $candidate->setRelation('machine', $server->machine);
+        }
+        if (array_key_exists('machine_id', $params)) {
+            // A machine reassignment must be evaluated against the proposed
+            // relation rather than a relation copied from the old row.
+            $candidate->unsetRelation('machine');
+        }
+        XrayConfigService::preflightNode(
+            $candidate,
+            $candidate->xray_config instanceof \stdClass ? $candidate->xray_config : null,
+            null,
+            null,
+        );
     }
 
     public function update(Request $request)
@@ -87,6 +111,13 @@ class ManageController extends Controller
         $server = Server::find($request->id);
         if (!$server) {
             return $this->fail([400202, '服务器不存在']);
+        }
+
+        $willRun = array_key_exists('enabled', $params)
+            ? (bool) $params['enabled']
+            : (bool) $server->enabled;
+        if ($willRun && (array_key_exists('enabled', $params) || array_key_exists('machine_id', $params))) {
+            $this->validateServerCandidate($server, $params);
         }
 
         if (array_key_exists('show', $params)) {

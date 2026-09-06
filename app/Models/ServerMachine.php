@@ -31,6 +31,7 @@ class ServerMachine extends Model
         'is_active' => 'boolean',
         'last_seen_at' => 'integer',
         'load_status' => 'array',
+        'xray_config' => 'object',
         'created_at' => 'timestamp',
         'updated_at' => 'timestamp',
     ];

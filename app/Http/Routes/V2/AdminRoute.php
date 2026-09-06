@@ -9,6 +9,7 @@ use App\Http\Controllers\V2\Admin\Server\GroupController;
 use App\Http\Controllers\V2\Admin\Server\RouteController;
 use App\Http\Controllers\V2\Admin\Server\ManageController;
 use App\Http\Controllers\V2\Admin\Server\MachineController;
+use App\Http\Controllers\V2\Admin\Server\XrayController;
 use App\Http\Controllers\V2\Admin\OrderController;
 use App\Http\Controllers\V2\Admin\UserController;
 use App\Http\Controllers\V2\Admin\StatController;
@@ -109,6 +110,25 @@ class AdminRoute
             });
 
             // 机器管理接口
+            $router->group(['prefix' => 'server/xray'], function ($router) {
+                $router->post('/generateVlessEncryption', [XrayController::class, 'generateVlessEncryption']);
+                $router->get('/fetch', [XrayController::class, 'fetch']);
+                $router->post('/validate', [XrayController::class, 'preflight']);
+                $router->post('/save', [XrayController::class, 'save']);
+                $router->get('/bindings', [XrayController::class, 'bindings']);
+                $router->post('/bindings', [XrayController::class, 'bindings']);
+                $router->get('/machine', [XrayController::class, 'machine']);
+                $router->post('/machine', [XrayController::class, 'machine']);
+            });
+            $router->group(['prefix' => 'server/outbound'], function ($router) {
+                $router->get('/fetch', [XrayController::class, 'outbounds']);
+                $router->post('/validate', [XrayController::class, 'validateOutbound']);
+                $router->post('/save', [XrayController::class, 'saveOutbound']);
+                $router->get('/snapshot', [XrayController::class, 'snapshot']);
+                $router->post('/snapshot', [XrayController::class, 'snapshot']);
+                $router->post('/drop', [XrayController::class, 'dropOutbound']);
+            });
+
             $router->group([
                 'prefix' => 'server/machine'
             ], function ($router) {

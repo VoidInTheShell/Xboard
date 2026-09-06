@@ -43,7 +43,7 @@ class CheckTrafficExceeded extends Command
             }
 
             $userIdsInGroup = $users->pluck('id')->toArray();
-            $servers = Server::whereJsonContains('group_ids', (string) $groupId)->get();
+            $servers = Server::forGroup($groupId)->get();
 
             foreach ($servers as $server) {
                 if (!NodeSyncService::isNodeOnline($server->id)) {

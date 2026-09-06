@@ -40,32 +40,13 @@ class GiftCardController extends Controller
             ->orderBy('created_at', 'desc')
             ->paginate($perPage);
 
-        $data = $templates->getCollection()->map(function ($template) {
-            return [
-                'id' => $template->id,
-                'name' => $template->name,
-                'description' => $template->description,
-                'type' => $template->type,
-                'type_name' => $template->type_name,
-                'status' => $template->status,
-                'conditions' => $template->conditions,
-                'rewards' => $template->rewards,
-                'limits' => $template->limits,
-                'special_config' => $template->special_config,
-                'icon' => $template->icon,
-                'background_image' => $template->background_image,
-                'theme_color' => $template->theme_color,
-                'sort' => $template->sort,
-                'admin_id' => $template->admin_id,
-                'created_at' => $template->created_at,
-                'updated_at' => $template->updated_at,
-                // 统计信息
-                'codes_count' => $template->codes()->count(),
-                'used_count' => $template->usages()->count(),
-            ];
-        })->values();
+        $templates->setCollection(
+            $templates->getCollection()
+                ->map(fn (GiftCardTemplate $template) => $this->templatePayload($template, true))
+                ->values()
+        );
 
-        return $this->paginate( $templates);
+        return $this->paginate($templates);
     }
 
     /**
@@ -118,11 +99,12 @@ class GiftCardController extends Controller
                 'updated_at' => time(),
             ]);
 
-            return $this->success($template);
+            return $this->success($this->templatePayload($template));
         } catch (\Exception $e) {
             Log::error('创建礼品卡模板失败', [
                 'admin_id' => $request->user()->id,
-                'data' => $request->all(),
+                'template_name' => $request->input('name'),
+                'template_type' => $request->input('type'),
                 'error' => $e->getMessage(),
             ]);
             return $this->fail([500, '创建失败']);
@@ -164,14 +146,14 @@ class GiftCardController extends Controller
             $updateData = collect($validatedData)->except('id')->all();
 
             if (empty($updateData)) {
-                return $this->success($template);
+                return $this->success($this->templatePayload($template));
             }
 
             $updateData['updated_at'] = time();
 
             $template->update($updateData);
 
-            return $this->success($template->fresh());
+            return $this->success($this->templatePayload($template->fresh()));
         } catch (\Exception $e) {
             Log::error('更新礼品卡模板失败', [
                 'admin_id' => $request->user()->id,
@@ -288,7 +270,8 @@ class GiftCardController extends Controller
                         $templateRewards = $template->rewards ? json_encode($template->rewards, JSON_UNESCAPED_UNICODE) : '';
                         // 状态判断
                         $status = $code->status_name;
-                        $usedBy = $code->user_id ?? '';
+                        // 导出允许返回完整兑换码，但不返回用户 ID 等关联身份数据。
+                        $usedBy = $code->user_id !== null ? '已使用' : '';
                         $usedAt = $code->used_at ? date('Y-m-d H:i:s', $code->used_at) : '';
                         $remark = $code->remark ?? '';
                         fputcsv($handle, [
@@ -327,7 +310,8 @@ class GiftCardController extends Controller
         } catch (\Exception $e) {
             Log::error('生成兑换码失败', [
                 'admin_id' => $request->user()->id,
-                'data' => $request->all(),
+                'template_id' => $request->input('template_id'),
+                'count' => $request->input('count'),
                 'error' => $e->getMessage(),
             ]);
             return $this->fail([500, '生成失败']);
@@ -364,24 +348,11 @@ class GiftCardController extends Controller
         $perPage = $request->input('per_page', 15);
         $codes = $query->orderBy('created_at', 'desc')->paginate($perPage);
 
-        $data = $codes->getCollection()->map(function ($code) {
-            return [
-                'id' => $code->id,
-                'template_id' => $code->template_id,
-                'template_name' => $code->template->name ?? '',
-                'code' => $code->code,
-                'batch_id' => $code->batch_id,
-                'status' => $code->status,
-                'status_name' => $code->status_name,
-                'user_id' => $code->user_id,
-                'user_email' => $code->user ? (substr($code->user->email ?? '', 0, 3) . '***@***') : null,
-                'used_at' => $code->used_at,
-                'expires_at' => $code->expires_at,
-                'usage_count' => $code->usage_count,
-                'max_usage' => $code->max_usage,
-                'created_at' => $code->created_at,
-            ];
-        })->values();
+        $codes->setCollection(
+            $codes->getCollection()
+                ->map(fn (GiftCardCode $code) => $this->codePayload($code))
+                ->values()
+        );
 
         return $this->paginate($codes);
     }
@@ -396,25 +367,56 @@ class GiftCardController extends Controller
             'action' => 'required|string|in:disable,enable',
         ]);
 
-        $code = GiftCardCode::find($request->input('id'));
-        if (!$code) {
-            return $this->fail([404, '兑换码不存在']);
-        }
-
         try {
-            if ($request->input('action') === 'disable') {
-                $code->markAsDisabled();
-            } else {
-                if ($code->status === GiftCardCode::STATUS_DISABLED) {
-                    $code->status = GiftCardCode::STATUS_UNUSED;
-                    $code->save();
-                }
-            }
+            return DB::transaction(function () use ($request) {
+                $code = GiftCardCode::whereKey($request->input('id'))
+                    ->lockForUpdate()
+                    ->first();
 
-            return $this->success([
-                'message' => $request->input('action') === 'disable' ? '已禁用' : '已启用',
+                if (!$code) {
+                    return $this->fail([404, '兑换码不存在']);
+                }
+
+                $action = $request->input('action');
+                $status = (int) $code->status;
+                $usageCount = (int) ($code->usage_count ?? 0);
+                $maxUsage = (int) ($code->max_usage ?? 0);
+
+                if ($action === 'disable') {
+                    if (
+                        $status !== GiftCardCode::STATUS_UNUSED
+                        || $code->isExpired()
+                        || $usageCount >= $maxUsage
+                    ) {
+                        return $this->fail([422, '只有仍可兑换且未使用的兑换码可以停用']);
+                    }
+
+                    $code->status = GiftCardCode::STATUS_DISABLED;
+                    $code->saveOrFail();
+                } else {
+                    if (
+                        $status !== GiftCardCode::STATUS_DISABLED
+                        || $code->isExpired()
+                        || $usageCount >= $maxUsage
+                    ) {
+                        return $this->fail([422, '只有未过期且仍可兑换的已禁用兑换码可以启用']);
+                    }
+
+                    $code->status = GiftCardCode::STATUS_UNUSED;
+                    $code->saveOrFail();
+                }
+
+                return $this->success([
+                    'message' => $action === 'disable' ? '已禁用' : '已启用',
+                ]);
+            });
+        } catch (\Throwable $e) {
+            Log::error('兑换码状态更新失败', [
+                'admin_id' => $request->user()->id,
+                'code_id' => $request->input('id'),
+                'action' => $request->input('action'),
+                'error' => $e->getMessage(),
             ]);
-        } catch (\Exception $e) {
             return $this->fail([500, '操作失败']);
         }
     }
@@ -464,19 +466,11 @@ class GiftCardController extends Controller
         $perPage = $request->input('per_page', 15);
         $usages = $query->orderBy('created_at', 'desc')->paginate($perPage);
 
-        $usages->transform(function ($usage) {
-            return [
-                'id' => $usage->id,
-                'code' => $usage->code->code ?? '',
-                'template_name' => $usage->template->name ?? '',
-                'user_email' => $usage->user->email ?? '',
-                'invite_user_email' => $usage->inviteUser ? (substr($usage->inviteUser->email ?? '', 0, 3) . '***@***') : null,
-                'rewards_given' => $usage->rewards_given,
-                'invite_rewards' => $usage->invite_rewards,
-                'multiplier_applied' => $usage->multiplier_applied,
-                'created_at' => $usage->created_at,
-            ];
-        })->values();
+        $usages->setCollection(
+            $usages->getCollection()
+                ->map(fn (GiftCardUsage $usage) => $this->usagePayload($usage))
+                ->values()
+        );
         return $this->paginate($usages);
     }
 
@@ -557,26 +551,65 @@ class GiftCardController extends Controller
             'status' => 'sometimes|integer|in:0,1,2,3',
         ]);
 
-        $code = GiftCardCode::find($validatedData['id']);
-        if (!$code) {
-            return $this->fail([404, '礼品卡不存在']);
-        }
-
         try {
-            $updateData = collect($validatedData)->except('id')->all();
+            return DB::transaction(function () use ($request, $validatedData) {
+                $code = GiftCardCode::whereKey($validatedData['id'])
+                    ->lockForUpdate()
+                    ->first();
 
-            if (empty($updateData)) {
-                return $this->success($code);
-            }
+                if (!$code) {
+                    return $this->fail([404, '兑换码不存在']);
+                }
 
-            $updateData['updated_at'] = time();
-            $code->update($updateData);
+                $updateData = collect($validatedData)->except('id')->all();
+                if (empty($updateData)) {
+                    return $this->success($this->codePayload($code));
+                }
 
-            return $this->success($code->fresh());
-        } catch (\Exception $e) {
+                $maxUsage = array_key_exists('max_usage', $updateData)
+                    ? (int) $updateData['max_usage']
+                    : (int) ($code->max_usage ?? 0);
+                if ($maxUsage < (int) ($code->usage_count ?? 0)) {
+                    return $this->fail([422, '最大使用次数不能低于已兑换次数']);
+                }
+
+                $expiresAt = array_key_exists('expires_at', $updateData)
+                    ? ($updateData['expires_at'] === null ? null : (int) $updateData['expires_at'])
+                    : ($code->expires_at === null ? null : (int) $code->expires_at);
+                $targetStatus = array_key_exists('status', $updateData)
+                    ? (int) $updateData['status']
+                    : null;
+
+                $statusError = $this->statusTransitionError(
+                    $code,
+                    $targetStatus,
+                    $expiresAt,
+                    $maxUsage
+                );
+                if ($statusError !== null) {
+                    return $this->fail([422, $statusError]);
+                }
+
+                if (array_key_exists('status', $updateData)) {
+                    $updateData['status'] = $targetStatus;
+                }
+                if (array_key_exists('max_usage', $updateData)) {
+                    $updateData['max_usage'] = $maxUsage;
+                }
+                if (array_key_exists('expires_at', $updateData)) {
+                    $updateData['expires_at'] = $expiresAt;
+                }
+
+                $updateData['updated_at'] = time();
+                $code->fill($updateData);
+                $code->saveOrFail();
+
+                return $this->success($this->codePayload($code->fresh()));
+            });
+        } catch (\Throwable $e) {
             Log::error('更新礼品卡信息失败', [
                 'admin_id' => $request->user()->id,
-                'code_id' => $code->id,
+                'code_id' => $validatedData['id'],
                 'error' => $e->getMessage(),
             ]);
             return $this->fail([500, '更新失败']);
@@ -592,31 +625,209 @@ class GiftCardController extends Controller
             'id' => 'required|integer|exists:v2_gift_card_code,id',
         ]);
 
-        $code = GiftCardCode::find($request->input('id'));
-        if (!$code) {
-            return $this->fail([404, '礼品卡不存在']);
-        }
-
-        // 检查是否已被使用
-        if ($code->status === GiftCardCode::STATUS_USED) {
-            return $this->fail([400, '该礼品卡已被使用，无法删除']);
-        }
-
         try {
-            // 检查是否有关联的使用记录
-            if ($code->usages()->exists()) {
-                return $this->fail([400, '该礼品卡存在使用记录，无法删除']);
-            }
+            return DB::transaction(function () use ($request) {
+                $code = GiftCardCode::whereKey($request->input('id'))
+                    ->lockForUpdate()
+                    ->first();
 
-            $code->delete();
-            return $this->success(['message' => '删除成功']);
-        } catch (\Exception $e) {
+                if (!$code) {
+                    return $this->fail([404, '兑换码不存在']);
+                }
+
+                // 检查是否已被使用
+                if (
+                    $code->status === GiftCardCode::STATUS_USED
+                    || (int) ($code->usage_count ?? 0) > 0
+                ) {
+                    return $this->fail([400, '该礼品卡已被使用，无法删除']);
+                }
+
+                // 检查是否有关联的使用记录
+                if ($code->usages()->exists()) {
+                    return $this->fail([400, '该礼品卡存在使用记录，无法删除']);
+                }
+
+                $code->delete();
+                return $this->success(['message' => '删除成功']);
+            });
+        } catch (\Throwable $e) {
             Log::error('删除礼品卡失败', [
                 'admin_id' => $request->user()->id,
-                'code_id' => $code->id,
+                'code_id' => $request->input('id'),
                 'error' => $e->getMessage(),
             ]);
             return $this->fail([500, '删除失败']);
         }
+    }
+
+    /**
+     * 将模板转换为 Admin 可用的白名单响应。
+     */
+    private function templatePayload(GiftCardTemplate $template, bool $withStats = false): array
+    {
+        $payload = [
+            'id' => $template->id,
+            'name' => $template->name,
+            'description' => $template->description,
+            'type' => $template->type,
+            'type_name' => $template->type_name,
+            'status' => $template->status,
+            'conditions' => $template->conditions,
+            'rewards' => $template->rewards,
+            'limits' => $template->limits,
+            'special_config' => $template->special_config,
+            'icon' => $template->icon,
+            'background_image' => $template->background_image,
+            'theme_color' => $template->theme_color,
+            'sort' => $template->sort,
+            'created_at' => $template->created_at,
+            'updated_at' => $template->updated_at,
+        ];
+
+        if ($withStats) {
+            $payload['codes_count'] = $template->codes()->count();
+            $payload['used_count'] = $template->usages()->count();
+        }
+
+        return $payload;
+    }
+
+    /**
+     * 将兑换码转换为不含原码和原始关联模型的白名单响应。
+     */
+    private function codePayload(GiftCardCode $code): array
+    {
+        $code->loadMissing([
+            'template:id,name',
+            'user:id,email',
+        ]);
+
+        $maskedCode = GiftCardCode::maskCode($code->code);
+        $status = $code->effectiveStatus();
+
+        return [
+            'id' => $code->id,
+            'template_id' => $code->template_id,
+            'template_name' => $code->template?->name ?? '',
+            'code' => $maskedCode,
+            'code_masked' => $maskedCode,
+            'batch_id' => $code->batch_id,
+            'status' => $status,
+            'status_name' => GiftCardCode::getStatusMap()[$status] ?? '未知状态',
+            'user_email' => self::maskEmail($code->user?->email),
+            'used_at' => $code->used_at,
+            'expires_at' => $code->expires_at,
+            'usage_count' => $code->usage_count,
+            'max_usage' => $code->max_usage,
+            'created_at' => $code->created_at,
+        ];
+    }
+
+    /**
+     * 将使用记录转换为不含原码、用户 ID 和关系对象的白名单响应。
+     */
+    private function usagePayload(GiftCardUsage $usage): array
+    {
+        $usage->loadMissing([
+            'code:id,code',
+            'template:id,name',
+            'user:id,email',
+            'inviteUser:id,email',
+        ]);
+
+        $maskedCode = GiftCardCode::maskCode($usage->code?->code);
+
+        return [
+            'id' => $usage->id,
+            'code_id' => $usage->code_id,
+            'code' => $maskedCode,
+            'code_masked' => $maskedCode,
+            'template_name' => $usage->template?->name ?? '',
+            'user_email' => self::maskEmail($usage->user?->email),
+            'invite_user_email' => self::maskEmail($usage->inviteUser?->email),
+            'rewards_given' => $usage->rewards_given,
+            'invite_rewards' => $usage->invite_rewards,
+            'multiplier_applied' => $usage->multiplier_applied,
+            'created_at' => $usage->created_at,
+        ];
+    }
+
+    /**
+     * 只暴露邮箱前缀的固定掩码，不返回原始关联用户邮箱。
+     */
+    private static function maskEmail(?string $email): ?string
+    {
+        if ($email === null || trim($email) === '') {
+            return null;
+        }
+
+        $email = trim($email);
+        $at = strrpos($email, '@');
+        if ($at === false || $at === 0) {
+            return '***';
+        }
+
+        return substr($email, 0, min(3, $at)) . '***@***';
+    }
+
+    /**
+     * 校验兑换码状态变更，避免管理员请求绕过兑换状态保护。
+     */
+    private function statusTransitionError(
+        GiftCardCode $code,
+        ?int $targetStatus,
+        ?int $expiresAt,
+        int $maxUsage
+    ): ?string {
+        if ($targetStatus === null || $targetStatus === (int) $code->status) {
+            return null;
+        }
+
+        $currentStatus = (int) $code->status;
+        $usageCount = (int) ($code->usage_count ?? 0);
+        $hasCapacity = $usageCount < $maxUsage;
+        $expired = $expiresAt !== null && $expiresAt < time();
+
+        if ($targetStatus === GiftCardCode::STATUS_USED) {
+            return '已使用状态只能由兑换流程产生';
+        }
+
+        if ($currentStatus === GiftCardCode::STATUS_USED) {
+            return '已使用兑换码不能改写状态';
+        }
+
+        if ($targetStatus === GiftCardCode::STATUS_EXPIRED) {
+            return null;
+        }
+
+        if (
+            $currentStatus === GiftCardCode::STATUS_EXPIRED
+            && $targetStatus === GiftCardCode::STATUS_UNUSED
+            && !$expired
+            && $hasCapacity
+        ) {
+            return null;
+        }
+
+        if (
+            $currentStatus === GiftCardCode::STATUS_UNUSED
+            && $targetStatus === GiftCardCode::STATUS_DISABLED
+            && !$expired
+            && $hasCapacity
+        ) {
+            return null;
+        }
+
+        if (
+            $currentStatus === GiftCardCode::STATUS_DISABLED
+            && $targetStatus === GiftCardCode::STATUS_UNUSED
+            && !$expired
+            && $hasCapacity
+        ) {
+            return null;
+        }
+
+        return '该兑换码当前状态不支持此变更';
     }
 }

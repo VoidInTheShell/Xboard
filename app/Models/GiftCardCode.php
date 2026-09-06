@@ -51,6 +51,10 @@ class GiftCardCode extends Model
     ];
 
     protected $casts = [
+        'status' => 'integer',
+        'user_id' => 'integer',
+        'usage_count' => 'integer',
+        'max_usage' => 'integer',
         'created_at' => 'timestamp',
         'updated_at' => 'timestamp',
         'used_at' => 'timestamp',
@@ -77,7 +81,54 @@ class GiftCardCode extends Model
      */
     public function getStatusNameAttribute(): string
     {
-        return self::getStatusMap()[$this->status] ?? '未知状态';
+        return self::getStatusMap()[$this->effectiveStatus()] ?? '未知状态';
+    }
+
+    /**
+     * 返回不包含完整兑换码的展示值。
+     *
+     * 兑换码只应在明确的生成/导出响应中返回原值；列表、历史和查询
+     * 响应统一使用此方法生成掩码，避免依赖调用方自行处理。
+     */
+    public static function maskCode(?string $code): ?string
+    {
+        if ($code === null || $code === '') {
+            return null;
+        }
+
+        $length = strlen($code);
+        if ($length <= 4) {
+            return str_repeat('•', $length);
+        }
+
+        if ($length <= 8) {
+            return substr($code, 0, 2) . '••••' . substr($code, -2);
+        }
+
+        return substr($code, 0, 4) . '••••••' . substr($code, -4);
+    }
+
+    /**
+     * 获取考虑有效期与使用次数后的展示状态。
+     *
+     * 历史数据可能仍保留 unused/used 状态而只通过 expires_at 过期，
+     * 这里不写数据库，仅让读取方获得准确状态。
+     */
+    public function effectiveStatus(): int
+    {
+        $status = (int) $this->status;
+        $usageCount = (int) ($this->usage_count ?? 0);
+        $maxUsage = (int) ($this->max_usage ?? 0);
+
+        if (
+            in_array($status, [self::STATUS_UNUSED, self::STATUS_USED], true)
+            && $this->isExpired()
+            && $usageCount < $maxUsage
+        ) {
+            return self::STATUS_EXPIRED;
+        }
+
+        return $status;
     }
 
     /**
@@ -143,7 +194,7 @@ class GiftCardCode extends Model
         $this->status = self::STATUS_USED;
         $this->user_id = $user->id;
         $this->used_at = time();
-        $this->usage_count += 1;
+        $this->usage_count = ((int) ($this->usage_count ?? 0)) + 1;
 
         return $this->save();
     }

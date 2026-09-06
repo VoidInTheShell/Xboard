@@ -151,7 +151,6 @@ class GiftCardService
             return [
                 'rewards' => $actualRewards,
                 'invite_rewards' => $inviteRewards,
-                'code' => $this->code->code,
                 'template_name' => $this->template->name,
             ];
         });
@@ -282,7 +281,8 @@ class GiftCardService
     public function getCodeInfo(): array
     {
         $info = [
-            'code' => $this->code->code,
+            'code' => GiftCardCode::maskCode($this->code->code),
+            'code_masked' => GiftCardCode::maskCode($this->code->code),
             'template' => [
                 'name' => $this->template->name,
                 'description' => $this->template->description,
@@ -292,7 +292,7 @@ class GiftCardService
                 'background_image' => $this->template->background_image,
                 'theme_color' => $this->template->theme_color,
             ],
-            'status' => $this->code->status,
+            'status' => $this->code->effectiveStatus(),
             'status_name' => $this->code->status_name,
             'expires_at' => $this->code->expires_at,
             'usage_count' => $this->code->usage_count,
@@ -342,7 +342,7 @@ class GiftCardService
     {
         Log::info('礼品卡使用记录', [
             'action' => $action,
-            'code' => $this->code->code,
+            'code_id' => $this->code->id,
             'template_id' => $this->template->id,
             'user_id' => $this->user?->id,
             'data' => $data,

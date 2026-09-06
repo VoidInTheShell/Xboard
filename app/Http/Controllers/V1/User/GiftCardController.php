@@ -6,6 +6,7 @@ use App\Exceptions\ApiException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\User\GiftCardCheckRequest;
 use App\Http\Requests\User\GiftCardRedeemRequest;
+use App\Models\GiftCardCode;
 use App\Models\GiftCardUsage;
 use App\Services\GiftCardService;
 use Illuminate\Http\Request;
@@ -44,7 +45,6 @@ class GiftCardController extends Controller
             return $this->fail([400, $e->getMessage()]);
         } catch (\Exception $e) {
             Log::error('礼品卡查询失败', [
-                'code' => $request->input('code'),
                 'user_id' => $request->user()->id,
                 'error' => $e->getMessage(),
             ]);
@@ -69,7 +69,7 @@ class GiftCardController extends Controller
             ]);
 
             Log::info('礼品卡使用成功', [
-                'code' => $request->input('code'),
+                'code_id' => $giftCardService->getCode()->id,
                 'user_id' => $request->user()->id,
                 'rewards' => $result['rewards'],
             ]);
@@ -85,7 +85,6 @@ class GiftCardController extends Controller
             return $this->fail([400, $e->getMessage()]);
         } catch (\Exception $e) {
             Log::error('礼品卡使用失败', [
-                'code' => $request->input('code'),
                 'user_id' => $request->user()->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -114,9 +113,8 @@ class GiftCardController extends Controller
         $data = $usages->getCollection()->map(function (GiftCardUsage $usage) {
             return [
                 'id' => $usage->id,
-                'code' => ($usage->code instanceof \App\Models\GiftCardCode && $usage->code->code)
-                    ? (substr($usage->code->code, 0, 8) . '****')
-                    : '',
+                'code' => GiftCardCode::maskCode($usage->code?->code),
+                'code_masked' => GiftCardCode::maskCode($usage->code?->code),
                 'template_name' => $usage->template->name ?? '',
                 'template_type' => $usage->template->type ?? '',
                 'template_type_name' => $usage->template->type_name ?? '',
@@ -157,7 +155,8 @@ class GiftCardController extends Controller
 
         return $this->success([
             'id' => $usage->id,
-            'code' => $usage->code->code ?? '',
+            'code' => GiftCardCode::maskCode($usage->code?->code),
+            'code_masked' => GiftCardCode::maskCode($usage->code?->code),
             'template' => [
                 'name' => $usage->template->name ?? '',
                 'description' => $usage->template->description ?? '',
@@ -169,7 +168,6 @@ class GiftCardController extends Controller
             'rewards_given' => $usage->rewards_given,
             'invite_rewards' => $usage->invite_rewards,
             'invite_user' => $usage->inviteUser ? [
-                'id' => $usage->inviteUser->id ?? '',
                 'email' => isset($usage->inviteUser->email) ? (substr($usage->inviteUser->email, 0, 3) . '***@***') : '',
             ] : null,
             'user_level_at_use' => $usage->user_level_at_use,

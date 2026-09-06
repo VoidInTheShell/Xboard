@@ -50,13 +50,15 @@ jobs:
           docker run --rm --entrypoint sh \
             --env APP_ENV=testing \
             --env APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
-            --env CACHE_STORE=array \
+            --env CACHE_DRIVER=array \
             --env DB_CONNECTION=sqlite \
             --env DB_DATABASE=database/testing.sqlite \
             --env QUEUE_CONNECTION=sync \
             --env SESSION_DRIVER=array \
+            --env REDIS_HOST=127.0.0.1 \
+            --env REDIS_PORT=6379 \
             xboard-ci:${GITHUB_SHA} \
-            -c 'touch database/testing.sqlite && php artisan test'
+            -c 'redis-server --daemonize yes && touch database/testing.sqlite && php vendor/bin/phpunit tests --colors=never --fail-on-empty-test-suite'
 
       - name: Verify Artisan boot and staging command registration
         run: |

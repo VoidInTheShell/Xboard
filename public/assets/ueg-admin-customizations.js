@@ -183,6 +183,7 @@ function normalizeClientRecord(client) {
     deviceType: scope.device_type ?? scope.deviceType,
     platform: scope.platform,
     sortOrder: Number(scope.sort_order ?? scope.sortOrder ?? 0),
+    isDefault: Boolean(scope.is_default ?? scope.isDefault),
   }));
   const platforms = [...new Set(scopes.map((scope) => scope.platform))];
   const deviceTypes = [...new Set(scopes.map((scope) => scope.deviceType))];
@@ -206,11 +207,13 @@ function normalizeClientRecord(client) {
     subscriptionTemplate: client.subscription_template ?? client.subscriptionTemplate ?? "clashmeta",
     hasUploadedLogo: Boolean(client.has_uploaded_logo ?? client.hasUploadedLogo),
     isBuiltin: Boolean(client.is_builtin ?? client.isBuiltin),
+    isEnabled: client.is_enabled !== false && client.isEnabled !== false,
   };
 }
 
 const clientSettingsState = {
   clients: CLIENT_PREVIEW_MODE ? buildPreviewClients() : [],
+  platformDefaults: [],
   deviceType: "desktop",
   platform: "windows",
   loading: !CLIENT_PREVIEW_MODE,
@@ -218,7 +221,7 @@ const clientSettingsState = {
   error: "",
   lastAction: CLIENT_PREVIEW_MODE
     ? "默认客户端已载入。当前修改只保留在本地页面中。"
-    : "正在读取客户端目录…",
+    : "正在读取客户端适配…",
 };
 
 let injectionPending = false;
@@ -571,13 +574,13 @@ function replaceLastTextNode(element, label) {
 
 function renameClientSettingsNavigation() {
   document.querySelectorAll('a[href*="/config/system/app"]').forEach((link) => {
-    replaceLastTextNode(link, "客户端设置");
+    replaceLastTextNode(link, "客户端适配");
   });
 
   if (!isClientSettingsRoute() || CLIENT_PREVIEW_MODE) return;
   document.querySelectorAll("#root h1, #root h2, #root h3").forEach((heading) => {
     if (/APP\s*设置|应用设置/i.test(heading.textContent || "")) {
-      heading.textContent = "客户端设置";
+      heading.textContent = "客户端适配";
     }
   });
 }
@@ -597,6 +600,45 @@ function getVisibleClients() {
       const bOrder = b.scopes.find((scope) => scope.deviceType === clientSettingsState.deviceType && scope.platform === clientSettingsState.platform)?.sortOrder ?? 0;
       return aOrder - bOrder || String(a.id).localeCompare(String(b.id));
     });
+}
+
+function getPlatformDefaultCandidates(deviceType, platform) {
+  return clientSettingsState.clients
+    .filter((client) => client.isEnabled !== false && client.scopes.some((scope) => (
+      scope.deviceType === deviceType && scope.platform === platform
+    )))
+    .sort((a, b) => {
+      const aOrder = a.scopes.find((scope) => scope.deviceType === deviceType && scope.platform === platform)?.sortOrder ?? 0;
+      const bOrder = b.scopes.find((scope) => scope.deviceType === deviceType && scope.platform === platform)?.sortOrder ?? 0;
+      return aOrder - bOrder || String(a.id).localeCompare(String(b.id));
+    });
+}
+
+function getPlatformDefault(deviceType, platform) {
+  const configured = clientSettingsState.platformDefaults.find((item) => item.device_type === deviceType && item.platform === platform);
+  if (configured) return configured;
+  return getPlatformDefaultFromClients(deviceType, platform);
+}
+
+function getPlatformDefaultFromClients(deviceType, platform) {
+  const candidates = getPlatformDefaultCandidates(deviceType, platform);
+  const explicit = candidates.find((client) => client.scopes.some((scope) => (
+    scope.deviceType === deviceType && scope.platform === platform && scope.isDefault
+  )));
+  const fallback = explicit || candidates[0];
+  return {
+    device_type: deviceType,
+    platform,
+    client_app_id: fallback?.id ?? null,
+    client_slug: fallback?.slug ?? null,
+    client_name: fallback?.name ?? null,
+    is_manual: Boolean(explicit),
+    is_fallback: !explicit,
+  };
+}
+
+function derivePlatformDefaults() {
+  return CLIENT_PLATFORM_OPTIONS.map((option) => getPlatformDefaultFromClients(option.device, option.value));
 }
 
 function setPreviewCategoryOrder(clients) {
@@ -621,13 +663,80 @@ async function loadClientSettings(root, successMessage = "") {
   try {
     const data = await request("client/fetch");
     clientSettingsState.clients = (data?.clients || []).map(normalizeClientRecord);
+    clientSettingsState.platformDefaults = Array.isArray(data?.platform_defaults)
+      ? data.platform_defaults
+      : derivePlatformDefaults();
     clientSettingsState.loaded = true;
-    clientSettingsState.lastAction = successMessage || "客户端目录已从服务器载入。";
+    clientSettingsState.lastAction = successMessage || "客户端适配已从服务器载入。";
   } catch (error) {
     clientSettingsState.error = error.message;
-    clientSettingsState.lastAction = "客户端目录读取失败。";
+    clientSettingsState.lastAction = "客户端适配读取失败。";
   } finally {
     clientSettingsState.loading = false;
+    renderClientSettingsPage(root);
+  }
+}
+
+function renderPlatformDefaults() {
+  return CLIENT_PLATFORM_OPTIONS.map((option) => {
+    const configured = getPlatformDefault(option.device, option.value);
+    const candidates = getPlatformDefaultCandidates(option.device, option.value);
+    const selectedId = configured.client_app_id === null || configured.client_app_id === undefined
+      ? "none"
+      : String(configured.client_app_id);
+    const currentName = configured.client_name || candidates.find((client) => String(client.id) === selectedId)?.name || "暂无可用客户端";
+    return `
+      <article class="ueg-client-recommendation-card">
+        <div class="ueg-client-recommendation-heading">
+          <div>
+            <strong>${escapeHtml(CLIENT_DEVICE_OPTIONS.find((item) => item.value === option.device)?.label || option.device)} · ${escapeHtml(option.label)}</strong>
+            <span>当前：${escapeHtml(currentName)}</span>
+          </div>
+          <span class="ueg-client-recommendation-status ${configured.is_manual ? "is-manual" : "is-fallback"}">${configured.is_manual ? "管理员设置" : "自动回退"}</span>
+        </div>
+        <label class="ueg-client-default-field">
+          <span>默认推荐客户端</span>
+          <select data-client-default-device="${escapeHtml(option.device)}" data-client-default-platform="${escapeHtml(option.value)}" ${candidates.length ? "" : "disabled"}>
+            <option value="none" ${selectedId === "none" ? "selected" : ""}>按平台顺序自动回退</option>
+            ${candidates.map((client) => `<option value="${escapeHtml(client.id)}" ${String(client.id) === selectedId ? "selected" : ""}>${escapeHtml(client.name)}</option>`).join("")}
+          </select>
+        </label>
+        ${candidates.length ? "" : '<small class="ueg-client-recommendation-empty">请先加入并启用该平台的客户端。</small>'}
+      </article>
+    `;
+  }).join("");
+}
+
+async function savePlatformDefault(deviceType, platform, value, root, select) {
+  select.disabled = true;
+  try {
+    if (CLIENT_PREVIEW_MODE) {
+      const selectedId = value === "none" ? null : String(value);
+      clientSettingsState.clients.forEach((client) => {
+        client.scopes.forEach((scope) => {
+          if (scope.deviceType === deviceType && scope.platform === platform) {
+            scope.isDefault = selectedId !== null && String(client.id) === selectedId;
+          }
+        });
+      });
+      clientSettingsState.platformDefaults = derivePlatformDefaults();
+      clientSettingsState.lastAction = `${CLIENT_PLATFORM_OPTIONS.find((item) => item.value === platform)?.label || platform} 默认推荐已更新。`;
+      renderClientSettingsPage(root);
+      return;
+    }
+
+    await request("client/default", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        device_type: deviceType,
+        platform,
+        client_app_id: value === "none" ? null : Number(value),
+      }),
+    });
+    await loadClientSettings(root, `${CLIENT_PLATFORM_OPTIONS.find((item) => item.value === platform)?.label || platform} 默认推荐已保存。`);
+  } catch (error) {
+    clientSettingsState.error = error.message;
     renderClientSettingsPage(root);
   }
 }
@@ -642,8 +751,8 @@ function renderClientSettingsPage(root) {
     <section class="ueg-client-settings-page" aria-labelledby="ueg-client-settings-title">
       <header class="ueg-client-settings-header">
         <div class="ueg-client-settings-heading">
-          <p class="ueg-client-settings-eyebrow">系统设置 / 客户端设置</p>
-          <h1 id="ueg-client-settings-title">客户端设置</h1>
+          <p class="ueg-client-settings-eyebrow">系统设置 / 客户端适配</p>
+          <h1 id="ueg-client-settings-title">客户端适配</h1>
           <p>配置订阅中心展示的客户端、分类顺序、下载入口和订阅模板。默认客户端与后续新增项使用同一套设置。</p>
         </div>
         <button type="button" class="ueg-client-button ueg-client-button-primary" data-client-action="add" ${clientSettingsState.loading ? "disabled" : ""}>添加客户端</button>
@@ -652,7 +761,7 @@ function renderClientSettingsPage(root) {
       <div class="ueg-client-preview-notice ${clientSettingsState.error ? "is-error" : ""}" role="status" aria-live="polite">
         <span class="ueg-client-preview-dot" aria-hidden="true"></span>
         <div>
-          <strong>${CLIENT_PREVIEW_MODE ? "本地交互原型" : "持久化客户端目录"}</strong>
+          <strong>${CLIENT_PREVIEW_MODE ? "本地交互原型" : "持久化客户端适配"}</strong>
           <span>${escapeHtml(clientSettingsState.error || clientSettingsState.lastAction)}${CLIENT_PREVIEW_MODE ? " 尚未连接后端，不会保存到服务器。" : ""}</span>
         </div>
       </div>
@@ -663,6 +772,17 @@ function renderClientSettingsPage(root) {
         <article><span>系统平台</span><strong>${platformCount}</strong><small>当前覆盖</small></article>
         <article><span>订阅模板</span><strong>${CLIENT_TEMPLATE_OPTIONS.length}</strong><small>可供选择</small></article>
       </div>
+
+      <section class="ueg-client-recommendations" aria-labelledby="ueg-client-recommendations-title">
+        <div class="ueg-client-catalog-header">
+          <div>
+            <h2 id="ueg-client-recommendations-title">平台默认推荐</h2>
+            <p>为每个设备与系统平台选择一个默认客户端；清除手动选择后按平台顺序自动回退。</p>
+          </div>
+          <span class="ueg-client-catalog-count">每个平台最多一个</span>
+        </div>
+        <div class="ueg-client-recommendation-grid">${renderPlatformDefaults()}</div>
+      </section>
 
       <section class="ueg-client-catalog" aria-labelledby="ueg-client-catalog-title">
         <div class="ueg-client-catalog-header">
@@ -688,7 +808,7 @@ function renderClientSettingsPage(root) {
           <p>当前只调整「${escapeHtml(CLIENT_DEVICE_OPTIONS.find((option) => option.value === clientSettingsState.deviceType)?.label)} / ${escapeHtml(CLIENT_PLATFORM_OPTIONS.find((option) => option.value === clientSettingsState.platform)?.label)}」</p>
         </div>
         <div class="ueg-client-list">
-          ${clientSettingsState.loading ? '<div class="ueg-client-list-state">正在读取客户端目录…</div>' : visibleClients.length ? visibleClients.map((client, index) => `
+          ${clientSettingsState.loading ? '<div class="ueg-client-list-state">正在读取客户端适配…</div>' : visibleClients.length ? visibleClients.map((client, index) => `
             <article class="ueg-client-row" data-client-id="${escapeHtml(client.id)}">
               <div class="ueg-client-order" aria-label="当前分类顺序 ${index + 1}">${String(index + 1).padStart(2, "0")}</div>
               ${renderClientLogo(client)}
@@ -697,6 +817,7 @@ function renderClientSettingsPage(root) {
                   <h3>${escapeHtml(client.name)}</h3>
                   <span>${escapeHtml(getClientTemplateLabel(client.subscriptionTemplate))}</span>
                   ${client.quickImportEnabled ? '<span class="is-import-enabled">快速导入</span>' : ""}
+                  ${client.isEnabled === false ? '<span class="is-disabled">已停用</span>' : ""}
                   ${client.isBuiltin ? '<span>内置</span>' : ""}
                 </div>
                 <p>${escapeHtml(client.description)}</p>
@@ -730,6 +851,15 @@ function renderClientSettingsPage(root) {
     clientSettingsState.platform = event.target.value;
     renderClientSettingsPage(root);
   });
+  root.querySelectorAll("[data-client-default-device]").forEach((select) => {
+    select.addEventListener("change", () => void savePlatformDefault(
+      select.dataset.clientDefaultDevice,
+      select.dataset.clientDefaultPlatform,
+      select.value,
+      root,
+      select,
+    ));
+  });
   root.querySelectorAll("[data-client-action][data-client-id]").forEach((button) => {
     button.addEventListener("click", () => void handleClientAction(button.dataset.clientAction, button.dataset.clientId, root));
   });
@@ -748,7 +878,8 @@ async function handleClientAction(action, clientId, root) {
     if (!window.confirm(`确定从用户端展示中删除 ${client.name} 吗？`)) return;
     if (CLIENT_PREVIEW_MODE) {
       clientSettingsState.clients = clientSettingsState.clients.filter((item) => String(item.id) !== String(client.id));
-      clientSettingsState.lastAction = `${client.name} 已从本地目录删除。`;
+      clientSettingsState.platformDefaults = derivePlatformDefaults();
+      clientSettingsState.lastAction = `${client.name} 已从本地客户端适配中删除。`;
       renderClientSettingsPage(root);
       return;
     }
@@ -826,6 +957,7 @@ function openClientEditor(clientId = null) {
     quickImportEnabled: false,
     quickImportUrl: "",
     subscriptionTemplate: "clashmeta",
+    isEnabled: true,
   };
   let pendingLogoDataUrl = client.logoDataUrl || "";
   let pendingLogoFileName = client.logoFileName || "";
@@ -921,6 +1053,10 @@ function openClientEditor(clientId = null) {
             <label class="ueg-client-toggle-field">
               <input type="checkbox" name="quickImportEnabled" ${client.quickImportEnabled ? "checked" : ""} />
               <span><strong>启用快速导入</strong><small>用户端显示“快速导入”按钮</small></span>
+            </label>
+            <label class="ueg-client-toggle-field">
+              <input type="checkbox" name="isEnabled" ${client.isEnabled !== false ? "checked" : ""} />
+              <span><strong>启用客户端</strong><small>停用后不在用户端展示，默认推荐会自动回退</small></span>
             </label>
             <label class="ueg-client-field ueg-client-field-wide" data-quick-import-panel>
               <span>快速导入链接 <b>*</b></span>
@@ -1095,15 +1231,18 @@ function openClientEditor(clientId = null) {
       subscription_template: form.elements.subscriptionTemplate.value,
       has_uploaded_logo: client.hasUploadedLogo || Boolean(pendingLogoFile),
       is_builtin: client.isBuiltin || false,
+      is_enabled: form.elements.isEnabled.checked,
     });
 
     if (CLIENT_PREVIEW_MODE) {
       if (existingClient) {
         const index = clientSettingsState.clients.findIndex((item) => String(item.id) === String(existingClient.id));
         clientSettingsState.clients[index] = record;
+        clientSettingsState.platformDefaults = derivePlatformDefaults();
         clientSettingsState.lastAction = `${record.name} 的本地设置已更新。`;
       } else {
         clientSettingsState.clients.push(record);
+        clientSettingsState.platformDefaults = derivePlatformDefaults();
         clientSettingsState.lastAction = `${record.name} 已添加到各所选分类末尾。`;
       }
 
@@ -1129,6 +1268,7 @@ function openClientEditor(clientId = null) {
     payload.append("quick_import_enabled", record.quickImportEnabled ? "1" : "0");
     payload.append("quick_import_url", record.quickImportEnabled ? record.quickImportUrl : "");
     payload.append("subscription_template", record.subscriptionTemplate);
+    payload.append("is_enabled", record.isEnabled === false ? "0" : "1");
     payload.append("scopes", JSON.stringify(scopes.map((scope) => ({
       device_type: scope.deviceType,
       platform: scope.platform,
@@ -1165,7 +1305,7 @@ function findClientSettingsSource() {
   if (legacyForm) return legacyForm;
 
   const heading = [...document.querySelectorAll("#root h1, #root h2, #root h3")]
-    .find((element) => (element.textContent || "").trim() === "客户端设置");
+    .find((element) => ["客户端设置", "客户端适配"].includes((element.textContent || "").trim()));
   if (!heading) return null;
 
   return heading.closest(".space-y-6") || heading.parentElement?.parentElement || null;

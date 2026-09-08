@@ -3,9 +3,16 @@ set -Eeuo pipefail
 
 TARGET_DIR="/home/beihai/docker/xboard"
 EXPECTED_TARGET="/home/beihai/docker/xboard"
-BUNDLE_DIR="${1:-}"
-REGISTRY_USER="${2:-}"
-RESET_MODE="${3:-preserve}"
+CONTROL_DIR="/etc/xboard-ci"
+ASSET_DIR="/usr/local/libexec/xboard-ci/assets"
+XBOARD_REPOSITORY="https://github.com/VoidInTheShell/Xboard.git"
+THEME_REPOSITORY="https://github.com/VoidInTheShell/DK_Theme.git"
+
+GIT_SHA="${1:-}"
+XBOARD_IMAGE="${2:-}"
+REQUESTED_THEME_IMAGE="${3:-}"
+REGISTRY_USER="${4:-}"
+RESET_MODE="${5:-preserve}"
 
 log() {
     printf '[production-deploy] %s\n' "$*"
@@ -20,27 +27,21 @@ require_file() {
     [ -f "$1" ] || fail "required file is missing: $1"
 }
 
-set_env_value() {
-    local file="$1"
-    local key="$2"
-    local value="$3"
-    local temp_file
-    temp_file=$(mktemp "${file}.XXXXXX")
-    awk -v key="$key" -v value="$value" '
-        BEGIN { found = 0 }
-        index($0, key "=") == 1 { print key "=" value; found = 1; next }
-        { print }
-        END { if (!found) print key "=" value }
-    ' "$file" > "$temp_file"
-    install -m 600 "$temp_file" "$file"
-    rm -f "$temp_file"
+branch_sha() {
+    local repository="$1"
+    local branch="$2"
+    git ls-remote --exit-code --refs "$repository" "refs/heads/$branch" | awk 'NR == 1 { print $1 }'
+}
+
+image_revision() {
+    docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$1" 2>/dev/null || true
 }
 
 wait_for_healthy() {
     local container="$1"
     local status
     for _ in $(seq 1 90); do
-        status=$(sudo -n docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)
+        status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)
         if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
             log "$container is $status"
             return 0
@@ -59,89 +60,100 @@ is_immutable_ghcr_image() {
     [[ "$image" =~ ^ghcr\.io/voidintheshell/${repository}@sha256:[0-9a-f]{64}$ ]]
 }
 
-[ -n "$BUNDLE_DIR" ] || fail "bundle directory argument is required"
-[ -n "$REGISTRY_USER" ] || fail "registry user argument is required"
+[ "$(id -u)" = "0" ] || fail "this trusted deployment script must run as root"
+[[ "$GIT_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "the release SHA is invalid"
+is_immutable_ghcr_image "$XBOARD_IMAGE" xboard || fail "the Xboard image must be an immutable GHCR digest"
+is_immutable_ghcr_image "$REQUESTED_THEME_IMAGE" dk_theme || fail "the theme image must be an immutable GHCR digest"
+[[ "$REGISTRY_USER" =~ ^[A-Za-z0-9-]{1,39}$ ]] || fail "the registry user is invalid"
 case "$RESET_MODE" in
     preserve|reset) ;;
     *) fail "reset mode must be preserve or reset" ;;
 esac
 
-RESOLVED_TARGET=$(realpath -m "$TARGET_DIR")
-[ "$RESOLVED_TARGET" = "$EXPECTED_TARGET" ] || fail "refusing unexpected target: $RESOLVED_TARGET"
-RESOLVED_BUNDLE=$(realpath -e "$BUNDLE_DIR")
-case "$RESOLVED_BUNDLE" in
-    /home/beihai/docker/.incoming/xboard-production-*) ;;
-    *) fail "refusing unexpected bundle path: $RESOLVED_BUNDLE" ;;
-esac
+CURRENT_XBOARD_SHA=$(branch_sha "$XBOARD_REPOSITORY" master)
+[ "$GIT_SHA" = "$CURRENT_XBOARD_SHA" ] || fail "release SHA is not the current Xboard master"
+CURRENT_THEME_SHA=$(branch_sha "$THEME_REPOSITORY" main)
+[[ "$CURRENT_THEME_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "unable to resolve the current DK Theme main"
 
-for file in compose.yaml deploy.env production-bootstrap.php xboard-mcp.conf apply-mcp-compat.sh admin_password server_token test_user_password; do
-    require_file "$RESOLVED_BUNDLE/$file"
+[ "$(realpath -m "$TARGET_DIR")" = "$EXPECTED_TARGET" ] || fail "unexpected production target"
+for file in compose.yaml production-bootstrap.php xboard-mcp.conf apply-mcp-compat.sh; do
+    require_file "$ASSET_DIR/$file"
+done
+for secret in admin_password server_token test_user_password; do
+    require_file "$CONTROL_DIR/secrets/$secret"
+    [ "$(stat -c '%U:%G:%a' "$CONTROL_DIR/secrets/$secret")" = "root:root:600" ] || fail "$secret permissions are not root:root:600"
 done
 
 IFS= read -r REGISTRY_TOKEN || true
 [ -n "${REGISTRY_TOKEN:-}" ] || fail "registry token was not provided on stdin"
 
-install -d -m 750 "$TARGET_DIR" "$TARGET_DIR/backups"
+AUTH_DIR=$(mktemp -d "/tmp/xboard-production-auth.XXXXXX")
+cleanup() {
+    rm -rf -- "$AUTH_DIR"
+    unset REGISTRY_TOKEN
+}
+trap cleanup EXIT
+printf '%s\n' "$REGISTRY_TOKEN" | docker --config "$AUTH_DIR" login ghcr.io --username "$REGISTRY_USER" --password-stdin >/dev/null
+unset REGISTRY_TOKEN
+
+log "pulling immutable application and theme images"
+docker --config "$AUTH_DIR" pull "$XBOARD_IMAGE"
+docker --config "$AUTH_DIR" pull "$REQUESTED_THEME_IMAGE"
+[ "$(image_revision "$XBOARD_IMAGE")" = "$GIT_SHA" ] || fail "the Xboard image revision does not match master"
+[ "$(image_revision "$REQUESTED_THEME_IMAGE")" = "$CURRENT_THEME_SHA" ] || fail "the requested theme image revision does not match main"
+
+install -o root -g root -d -m 750 "$TARGET_DIR" "$TARGET_DIR/backups"
 exec 9>"$TARGET_DIR/.deploy.lock"
 flock -x 9
 log "acquired production deployment lock"
 
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 release_backup="$TARGET_DIR/backups/release-${timestamp}"
-install -d -m 700 "$release_backup"
+install -o root -g root -d -m 700 "$release_backup"
 CURRENT_THEME_IMAGE=""
 if [ -f "$TARGET_DIR/.deploy.env" ]; then
     CURRENT_THEME_IMAGE=$(sed -n 's/^DK_THEME_IMAGE=//p' "$TARGET_DIR/.deploy.env" | tail -1)
     if [ -n "$CURRENT_THEME_IMAGE" ]; then
-        is_immutable_ghcr_image "$CURRENT_THEME_IMAGE" dk_theme || fail "the installed DK_THEME_IMAGE is not an immutable GHCR digest"
+        is_immutable_ghcr_image "$CURRENT_THEME_IMAGE" dk_theme || fail "the installed theme is not an immutable GHCR digest"
+        if [ "$(image_revision "$CURRENT_THEME_IMAGE")" != "$CURRENT_THEME_SHA" ]; then
+            log "installed theme is not current main; selecting the requested main image"
+            CURRENT_THEME_IMAGE=""
+        fi
     fi
 fi
 for item in compose.yaml .deploy.env deploy.sh; do
     [ ! -e "$TARGET_DIR/$item" ] || cp -a "$TARGET_DIR/$item" "$release_backup/$item"
 done
 
-install -d -m 700 "$TARGET_DIR/secrets" "$TARGET_DIR/bootstrap" "$TARGET_DIR/runtime-secrets" "$TARGET_DIR/bunkerweb"
-install -m 644 "$RESOLVED_BUNDLE/compose.yaml" "$TARGET_DIR/compose.yaml"
-install -m 600 "$RESOLVED_BUNDLE/deploy.env" "$TARGET_DIR/.deploy.env"
-install -m 700 "$RESOLVED_BUNDLE/apply-mcp-compat.sh" "$TARGET_DIR/bunkerweb/apply-mcp-compat.sh"
-install -m 644 "$RESOLVED_BUNDLE/xboard-mcp.conf" "$TARGET_DIR/bunkerweb/xboard-mcp.conf"
-install -m 644 "$RESOLVED_BUNDLE/production-bootstrap.php" "$TARGET_DIR/bootstrap/production-bootstrap.php"
-install -m 600 "$RESOLVED_BUNDLE/admin_password" "$TARGET_DIR/secrets/admin_password"
-install -m 600 "$RESOLVED_BUNDLE/server_token" "$TARGET_DIR/secrets/server_token"
-install -m 600 "$RESOLVED_BUNDLE/test_user_password" "$TARGET_DIR/secrets/test_user_password"
-install -m 700 "$RESOLVED_BUNDLE/deploy.sh" "$TARGET_DIR/deploy.sh"
+install -o root -g root -d -m 700 "$TARGET_DIR/secrets" "$TARGET_DIR/bootstrap" "$TARGET_DIR/runtime-secrets" "$TARGET_DIR/bunkerweb"
+install -o root -g root -m 644 "$ASSET_DIR/compose.yaml" "$TARGET_DIR/compose.yaml"
+install -o root -g root -m 700 "$0" "$TARGET_DIR/deploy.sh"
+install -o root -g root -m 700 "$ASSET_DIR/apply-mcp-compat.sh" "$TARGET_DIR/bunkerweb/apply-mcp-compat.sh"
+install -o root -g root -m 644 "$ASSET_DIR/xboard-mcp.conf" "$TARGET_DIR/bunkerweb/xboard-mcp.conf"
+install -o root -g root -m 644 "$ASSET_DIR/production-bootstrap.php" "$TARGET_DIR/bootstrap/production-bootstrap.php"
+for secret in admin_password server_token test_user_password; do
+    install -o root -g root -m 600 "$CONTROL_DIR/secrets/$secret" "$TARGET_DIR/secrets/$secret"
+done
 
-if [ -n "$CURRENT_THEME_IMAGE" ]; then
-    set_env_value "$TARGET_DIR/.deploy.env" "DK_THEME_IMAGE" "$CURRENT_THEME_IMAGE"
-fi
-
-XBOARD_IMAGE=$(sed -n 's/^XBOARD_IMAGE=//p' "$TARGET_DIR/.deploy.env" | tail -1)
-DK_THEME_IMAGE=$(sed -n 's/^DK_THEME_IMAGE=//p' "$TARGET_DIR/.deploy.env" | tail -1)
-is_immutable_ghcr_image "$XBOARD_IMAGE" xboard || fail "XBOARD_IMAGE must be an immutable xboard GHCR digest"
-is_immutable_ghcr_image "$DK_THEME_IMAGE" dk_theme || fail "DK_THEME_IMAGE must be an immutable DK Theme GHCR digest"
-
-AUTH_DIR=$(mktemp -d "/tmp/xboard-production-auth.XXXXXX")
-cleanup() {
-    sudo -n rm -rf -- "$AUTH_DIR"
-    unset REGISTRY_TOKEN
-}
-trap cleanup EXIT
-printf '%s\n' "$REGISTRY_TOKEN" | sudo -n docker --config "$AUTH_DIR" login ghcr.io --username "$REGISTRY_USER" --password-stdin >/dev/null
-unset REGISTRY_TOKEN
-
-log "pulling immutable application and theme images"
-sudo -n docker --config "$AUTH_DIR" pull "$XBOARD_IMAGE"
-sudo -n docker --config "$AUTH_DIR" pull "$DK_THEME_IMAGE"
+DK_THEME_IMAGE="${CURRENT_THEME_IMAGE:-$REQUESTED_THEME_IMAGE}"
+{
+    printf 'XBOARD_IMAGE=%s\n' "$XBOARD_IMAGE"
+    printf 'DK_THEME_IMAGE=%s\n' "$DK_THEME_IMAGE"
+    printf 'PRODUCTION_PANEL_URL=https://panel.uegov.org\n'
+    printf 'PRODUCTION_ADMIN_ACCOUNT=beihai3body@uegov.org\n'
+    printf 'PRODUCTION_TEST_USER_EMAIL=test@test.user\n'
+} > "$TARGET_DIR/.deploy.env"
+chmod 600 "$TARGET_DIR/.deploy.env"
 
 compose() {
-    sudo -n docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
+    docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
 }
 
 if [ "$RESET_MODE" = "reset" ]; then
-    log "performing the explicitly confirmed fresh-data deployment"
+    log "performing the separately armed fresh-data deployment"
     compose down --remove-orphans || true
     data_backup="$TARGET_DIR/backups/data-reset-${timestamp}"
-    install -d -m 700 "$data_backup"
+    install -o root -g root -d -m 700 "$data_backup"
     for item in .env data logs uploads themes plugins redis runtime-secrets; do
         path=$(realpath -m "$TARGET_DIR/$item")
         case "$path" in
@@ -151,13 +163,13 @@ if [ "$RESET_MODE" = "reset" ]; then
         [ ! -e "$path" ] || mv "$path" "$data_backup/$item"
     done
     install -d -m 755 "$TARGET_DIR/data" "$TARGET_DIR/logs" "$TARGET_DIR/uploads" "$TARGET_DIR/themes" "$TARGET_DIR/plugins" "$TARGET_DIR/redis"
-    install -d -m 700 "$TARGET_DIR/runtime-secrets"
-    install -m 600 /dev/null "$TARGET_DIR/.env"
+    install -o root -g root -d -m 700 "$TARGET_DIR/runtime-secrets"
+    install -o root -g root -m 600 /dev/null "$TARGET_DIR/.env"
 
     compose run --rm bootstrap php artisan xboard:install --no-interaction
     compose up -d xboard
     wait_for_healthy xboard-app || fail "xboard-app did not become healthy after installation"
-    sudo -n docker exec xboard-app test -S /data/redis.sock || fail "the embedded Redis socket is unavailable"
+    docker exec xboard-app test -S /data/redis.sock || fail "the embedded Redis socket is unavailable"
     compose run --rm bootstrap php /bootstrap/production-bootstrap.php
     compose restart xboard
 else
@@ -185,8 +197,8 @@ if ! wait_for_healthy xboard-theme; then
     fail "xboard-theme did not become healthy"
 fi
 
-sudo -n docker exec xboard-app wget -q -O /dev/null http://127.0.0.1:7001/
-sudo -n docker exec xboard-theme wget -q -O /dev/null http://127.0.0.1/healthz
+docker exec xboard-app wget -q -O /dev/null http://127.0.0.1:7001/
+docker exec xboard-theme wget -q -O /dev/null http://127.0.0.1/healthz
 "$TARGET_DIR/bunkerweb/apply-mcp-compat.sh" "$TARGET_DIR/bunkerweb/xboard-mcp.conf"
 
 log "production deployment complete"

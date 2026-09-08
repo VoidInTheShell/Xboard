@@ -2,7 +2,9 @@
 
 This directory defines the JPGREEN production panel. The persistent runtime is exactly two containers: `xboard-app` and `xboard-theme`. BunkerWeb remains the public TCP 80/443 entrypoint through the existing `bw-services` network. The standalone Xboard-Admin project is not deployed.
 
-The Xboard `master` workflow deploys immutable application and DK Theme digests through the GitHub `production` Environment. Ordinary mainline deployments preserve the SQLite database, uploads, themes, plugins, application `.env`, Redis state and runtime credentials. A fresh-data deployment is accepted only from a manual workflow dispatch with the boolean reset input and exact confirmation text `RESET JPGREEN XBOARD DATA`.
+The Xboard `master` workflow deploys immutable application and DK Theme digests through the GitHub `production` Environment. It connects as a dedicated `xboard-ci` SSH principal whose key is bound to a root-owned forced-command dispatcher. The account is not a Docker-group member and cannot open a general shell, upload arbitrary executables, forward ports or run arbitrary sudo commands.
+
+Ordinary mainline deployments preserve the SQLite database, uploads, themes, plugins, application `.env`, Redis state and runtime credentials. A fresh-data deployment requires a manual workflow dispatch, the boolean reset input, the exact confirmation text `RESET JPGREEN XBOARD DATA`, and a separate root-only authorization file at `/etc/xboard-ci/reset-authorizations/<master-sha>`. The dispatcher consumes that file only for the corresponding SHA and restores it when deployment fails, so possession of the CI key alone cannot erase production data.
 
 During a confirmed reset, existing Xboard runtime data is moved into a timestamped, mode-0700 backup below `/home/beihai/docker/xboard/backups` before a new database is installed. The bootstrap creates only the fixed administrator, `test@test.user`, the `Production Access` group and one revocable MCP Key. Servers and nodes are intentionally not created here; they are added later through the verified MCP connection.
 
@@ -10,13 +12,12 @@ The one-time MCP plaintext is written to `/home/beihai/docker/xboard/runtime-sec
 
 The BunkerWeb helper adds one exact `/api/mcp` location. It disables ModSecurity only for that authenticated JSON-RPC endpoint, leaves all other paths under the panel service WAF, retains the existing path-specific request limit, updates the custom config through `Database.upsert_custom_config`, and validates the effective Nginx configuration. It does not restart the traffic-serving BunkerWeb container.
 
+Production bootstrap passwords and the server token stay in root-owned mode-0600 files below `/etc/xboard-ci/secrets`; they are not stored in GitHub. A workflow passes only its run-scoped `GITHUB_TOKEN` over SSH stdin for the immediate GHCR pull, and the deployer removes its temporary Docker authentication directory on exit.
+
 Required `production` Environment secrets:
 
-- `PRODUCTION_SSH_PRIVATE_KEY`
+- `PRODUCTION_DEPLOY_SSH_KEY`
 - `PRODUCTION_SSH_KNOWN_HOSTS`
-- `PRODUCTION_ADMIN_PASSWORD`
-- `PRODUCTION_TEST_USER_PASSWORD`
-- `PRODUCTION_SERVER_TOKEN`
 
 Required `production` Environment variables:
 
@@ -25,6 +26,6 @@ Required `production` Environment variables:
 - `PRODUCTION_SSH_USER`
 - `PRODUCTION_PANEL_URL` (`https://panel.uegov.org`)
 - `PRODUCTION_ADMIN_PATH` (`unitedearthgov`)
-- `PRODUCTION_ADMIN_ACCOUNT` (`beihai3body@uegov.org`)
-- `PRODUCTION_TEST_USER_EMAIL` (`test@test.user`)
 - `PRODUCTION_DK_THEME_IMAGE` (immutable `ghcr.io/voidintheshell/dk_theme@sha256:...` reference)
+
+`PRODUCTION_SSH_USER` must be `xboard-ci`. Provisioning with `host/install-ci-deployer.sh` is an explicit administrator action; ordinary workflows cannot replace the root-owned dispatcher, deploy scripts or verification script.

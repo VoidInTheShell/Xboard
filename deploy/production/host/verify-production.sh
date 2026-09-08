@@ -18,12 +18,14 @@ fail() {
 "$LIBEXEC_DIR/verify-theme.sh"
 docker inspect xboard-app >/dev/null
 docker exec bunkerweb-bunkerweb-1 sh -lc 'nginx -T 2>/dev/null | grep -q "^# XBOARD-MCP-COMPAT$"'
+docker exec bunkerweb-bunkerweb-1 sh -lc 'nginx -T 2>/dev/null | grep -q "^# XBOARD-NODE-CONTROL-COMPAT$"'
 
 request_file=$(mktemp)
 response_file=$(mktemp)
 mcp_response=$(mktemp)
+node_response=$(mktemp)
 cleanup() {
-    rm -f -- "$request_file" "$response_file" "$mcp_response"
+    rm -f -- "$request_file" "$response_file" "$mcp_response" "$node_response"
     unset TEST_USER_PASSWORD
 }
 trap cleanup EXIT
@@ -48,4 +50,13 @@ mcp_status=$(curl --silent --show-error --output "$mcp_response" --write-out '%{
     "$PANEL_URL/api/mcp")
 [ "$mcp_status" = "401" ] || fail "unauthenticated MCP probe did not return HTTP 401"
 
-printf 'containers=xboard-app,xboard-theme login=ok bunkerweb_mcp=active public_entrypoints=ok\n'
+node_status=$(curl --silent --show-error --output "$node_response" --write-out '%{http_code}' \
+    --resolve "$PANEL_HOST:443:127.0.0.1" \
+    --header 'Accept: application/json' --header 'Content-Type: application/json' \
+    --data-binary '{"machine_id":2147483647,"token":"invalid-control-plane-probe"}' \
+    "$PANEL_URL/api/v2/server/machine/nodes")
+[ "$node_status" = "403" ] || fail "invalid machine probe did not reach the application auth boundary"
+jq -e '.message == "Machine not found or disabled"' "$node_response" >/dev/null \
+    || fail "machine API probe was intercepted before the JSON application boundary"
+
+printf 'containers=xboard-app,xboard-theme login=ok bunkerweb_mcp=active node_control=reachable public_entrypoints=ok\n'

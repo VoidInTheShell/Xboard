@@ -93,6 +93,9 @@ jobs:
             --volume "${GITHUB_WORKSPACE}/deploy/production/bootstrap/production-bootstrap.php:/tmp/production-bootstrap.php:ro" \
           xboard-ci:${GITHUB_SHA} -l /tmp/production-bootstrap.php
           grep -q '^# XBOARD-MCP-COMPAT$' deploy/production/bunkerweb/xboard-mcp.conf
+          grep -q '^# XBOARD-NODE-CONTROL-COMPAT$' deploy/production/bunkerweb/xboard-mcp.conf
+          grep -Fq 'location ^~ /api/v2/server/' deploy/production/bunkerweb/xboard-mcp.conf
+          grep -Fq 'location ^~ /api/v1/server/' deploy/production/bunkerweb/xboard-mcp.conf
           grep -Fq 'docker exec -u 0 "$SCHEDULER" rm -f /tmp/xboard-mcp-compat.conf' deploy/production/bunkerweb/apply-mcp-compat.sh
           sudo bash deploy/production/host/xboard-ci-dispatcher.sh health \
             | grep -qx 'principal=xboard-ci forced_command=ready'

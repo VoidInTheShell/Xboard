@@ -16,6 +16,7 @@ fail() {
 
 [ -f "$CONFIG_FILE" ] || fail "configuration file is missing"
 grep -q '^# XBOARD-MCP-COMPAT$' "$CONFIG_FILE" || fail "configuration marker is missing"
+grep -q '^# XBOARD-NODE-CONTROL-COMPAT$' "$CONFIG_FILE" || fail "node control compatibility marker is missing"
 
 for container in "$SCHEDULER" "$BUNKERWEB" "$DATABASE"; do
     status=$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)
@@ -69,7 +70,7 @@ PY'
 fi
 
 for _ in $(seq 1 45); do
-    if docker exec "$BUNKERWEB" sh -lc 'nginx -T 2>/dev/null | grep -q "^# XBOARD-MCP-COMPAT$"'; then
+    if docker exec "$BUNKERWEB" sh -lc 'nginx -T 2>/dev/null | grep -q "^# XBOARD-MCP-COMPAT$" && nginx -T 2>/dev/null | grep -q "^# XBOARD-NODE-CONTROL-COMPAT$"'; then
         docker exec "$BUNKERWEB" nginx -t >/dev/null
         printf '[bunkerweb-mcp] active checksum=%s\n' "$checksum"
         exit 0
@@ -80,7 +81,7 @@ done
 printf '[bunkerweb-mcp] scheduler did not materialize the change; restarting only the scheduler\n'
 docker restart "$SCHEDULER" >/dev/null
 for _ in $(seq 1 60); do
-    if docker exec "$BUNKERWEB" sh -lc 'nginx -T 2>/dev/null | grep -q "^# XBOARD-MCP-COMPAT$"'; then
+    if docker exec "$BUNKERWEB" sh -lc 'nginx -T 2>/dev/null | grep -q "^# XBOARD-MCP-COMPAT$" && nginx -T 2>/dev/null | grep -q "^# XBOARD-NODE-CONTROL-COMPAT$"'; then
         docker exec "$BUNKERWEB" nginx -t >/dev/null
         printf '[bunkerweb-mcp] active checksum=%s\n' "$checksum"
         exit 0

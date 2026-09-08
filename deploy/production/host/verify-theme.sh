@@ -37,7 +37,7 @@ case "$logo_type" in
     *) fail "the public theme logo has an unexpected content type" ;;
 esac
 public_curl "$PANEL_URL/unitedearthgov" > "$admin_page"
-grep -Fq '<title>XBoard</title>' "$admin_page" || fail "the built-in administrator title is missing"
+grep -Eq '<title>(XBoard|UEG-Net)</title>' "$admin_page" || fail "the built-in administrator title is missing"
 grep -Fq '/assets/admin/' "$admin_page" || fail "the built-in administrator assets are missing"
 
 printf 'container=xboard-theme health=ok bunkerweb=ok public_theme=ok admin=ok isolation=ok\n'

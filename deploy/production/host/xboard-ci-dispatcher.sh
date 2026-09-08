@@ -84,10 +84,7 @@ case "${ARGS[0]}" in
         ;;
     verify-theme)
         [ "${#ARGS[@]}" -eq 1 ] || fail "verify-theme accepts no arguments"
-        docker inspect xboard-theme >/dev/null
-        docker exec xboard-theme wget -q -O /dev/null http://127.0.0.1/healthz
-        ! docker ps -a --format '{{.Names}}' | grep -qx xboard-admin || fail "standalone admin must not run in production"
-        printf 'container=xboard-theme health=ok isolation=ok\n'
+        "$LIBEXEC_DIR/verify-theme.sh"
         ;;
     *)
         fail "command is not permitted"

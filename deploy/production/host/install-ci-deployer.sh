@@ -21,7 +21,7 @@ require_source() {
 [ "$(id -u)" = "0" ] || fail "installer must run as root"
 [ -f "$PUBLIC_KEY_FILE" ] || fail "public key file is required"
 [ -d "$SOURCE_DIR" ] || fail "source directory is required"
-for file in xboard-ci-entrypoint.sh xboard-ci-dispatcher.sh deploy-xboard.sh deploy-theme.sh verify-production.sh compose.yaml production-bootstrap.php xboard-mcp.conf apply-mcp-compat.sh; do
+for file in xboard-ci-entrypoint.sh xboard-ci-dispatcher.sh deploy-xboard.sh deploy-theme.sh verify-theme.sh verify-production.sh compose.yaml production-bootstrap.php xboard-mcp.conf apply-mcp-compat.sh; do
     require_source "$file"
 done
 
@@ -44,6 +44,7 @@ install -o root -g root -m 755 "$SOURCE_DIR/xboard-ci-dispatcher.sh" /usr/local/
 install -o root -g root -d -m 755 "$LIBEXEC_DIR" "$LIBEXEC_DIR/assets"
 install -o root -g root -m 755 "$SOURCE_DIR/deploy-xboard.sh" "$LIBEXEC_DIR/deploy-xboard.sh"
 install -o root -g root -m 755 "$SOURCE_DIR/deploy-theme.sh" "$LIBEXEC_DIR/deploy-theme.sh"
+install -o root -g root -m 755 "$SOURCE_DIR/verify-theme.sh" "$LIBEXEC_DIR/verify-theme.sh"
 install -o root -g root -m 755 "$SOURCE_DIR/verify-production.sh" "$LIBEXEC_DIR/verify-production.sh"
 install -o root -g root -m 644 "$SOURCE_DIR/compose.yaml" "$LIBEXEC_DIR/assets/compose.yaml"
 install -o root -g root -m 644 "$SOURCE_DIR/production-bootstrap.php" "$LIBEXEC_DIR/assets/production-bootstrap.php"
@@ -68,7 +69,7 @@ chown root:root /etc/sudoers.d/xboard-ci-deployer
 chmod 440 /etc/sudoers.d/xboard-ci-deployer
 /usr/sbin/visudo -cf /etc/sudoers.d/xboard-ci-deployer >/dev/null
 
-for path in /usr/local/bin/xboard-ci-entrypoint /usr/local/sbin/xboard-ci-dispatcher "$LIBEXEC_DIR/deploy-xboard.sh" "$LIBEXEC_DIR/deploy-theme.sh" "$LIBEXEC_DIR/verify-production.sh"; do
+for path in /usr/local/bin/xboard-ci-entrypoint /usr/local/sbin/xboard-ci-dispatcher "$LIBEXEC_DIR/deploy-xboard.sh" "$LIBEXEC_DIR/deploy-theme.sh" "$LIBEXEC_DIR/verify-theme.sh" "$LIBEXEC_DIR/verify-production.sh"; do
     [ "$(stat -c '%U:%G' "$path")" = "root:root" ] || fail "trusted executable ownership is invalid"
 done
 

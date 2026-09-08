@@ -12,6 +12,8 @@ The one-time MCP plaintext is written to `/home/beihai/docker/xboard/runtime-sec
 
 The BunkerWeb helper adds one exact `/api/mcp` location. It disables ModSecurity only for that authenticated JSON-RPC endpoint, leaves all other paths under the panel service WAF, retains the existing path-specific request limit, updates the custom config through `Database.upsert_custom_config`, and validates the effective Nginx configuration. It does not restart the traffic-serving BunkerWeb container.
 
+After a theme container replacement, the trusted deployer validates the generated Nginx configuration and performs a graceful BunkerWeb reload so its upstream address immediately follows the new container IP. Production acceptance runs through the restricted host verifier with real `panel.uegov.org` TLS/SNI directed at the local BunkerWeb listener. This keeps the service's `WHITELIST_COUNTRY=CN` policy intact instead of opening all dynamic GitHub-hosted runner addresses, while still verifying health, PNG MIME/content, the built-in administrator shell, test-user login and the unauthenticated MCP boundary.
+
 Production bootstrap passwords and the server token stay in root-owned mode-0600 files below `/etc/xboard-ci/secrets`; they are not stored in GitHub. A workflow passes only its run-scoped `GITHUB_TOKEN` over SSH stdin for the immediate GHCR pull, and the deployer removes its temporary Docker authentication directory on exit.
 
 Required `production` Environment secrets:

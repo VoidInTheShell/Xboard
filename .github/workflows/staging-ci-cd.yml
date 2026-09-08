@@ -449,35 +449,7 @@ jobs:
           printf '%s\n' "${GHCR_TOKEN}" | ssh "${SSH_ARGS[@]}" "${SSH_TARGET}" \
             "deploy-xboard ${GITHUB_SHA} ${XBOARD_IMAGE} ${DK_THEME_IMAGE} ${GITHUB_ACTOR} ${RESET_MODE} ${reset_marker}"
 
-      - name: Verify public production entrypoints
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          umask 077
-          admin_page=$(mktemp)
-          logo_file=$(mktemp)
-          mcp_response=$(mktemp)
-          trap 'rm -f -- "${admin_page}" "${logo_file}" "${mcp_response}"' EXIT
-
-          curl --fail --silent --show-error --retry 18 --retry-all-errors --retry-delay 5 "${PANEL_URL}/healthz" > /dev/null
-          curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 "${PANEL_URL}/" > /dev/null
-          curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 \
-            "${PANEL_URL}/${ADMIN_PATH}" > "${admin_page}"
-          grep --fixed-strings '<title>XBoard</title>' "${admin_page}" > /dev/null
-          grep --fixed-strings '/assets/admin/' "${admin_page}" > /dev/null
-
-          logo_type=$(curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 \
-            --output "${logo_file}" --write-out '%{content_type}' "${PANEL_URL}/dk-theme/ueg-mark.png")
-          test -s "${logo_file}"
-          case "${logo_type}" in image/png*) ;; *) exit 1 ;; esac
-
-          mcp_status=$(curl --silent --show-error --output "${mcp_response}" --write-out '%{http_code}' \
-            --header 'Content-Type: application/json' \
-            --data-binary '{"jsonrpc":"2.0","id":"workflow-probe","method":"ping","params":{}}' \
-            "${PANEL_URL}/api/mcp")
-          test "${mcp_status}" = '401'
-
-      - name: Verify protected login and runtime isolation
+      - name: Verify public entrypoints and protected runtime from JPGREEN
         shell: bash
         run: |
           set -Eeuo pipefail

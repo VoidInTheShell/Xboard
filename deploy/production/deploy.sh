@@ -7,6 +7,8 @@ CONTROL_DIR="/etc/xboard-ci"
 ASSET_DIR="/usr/local/libexec/xboard-ci/assets"
 XBOARD_REPOSITORY="https://github.com/VoidInTheShell/Xboard.git"
 THEME_REPOSITORY="https://github.com/VoidInTheShell/DK_Theme.git"
+BUNKERWEB="bunkerweb-bunkerweb-1"
+PANEL_HOST="panel.uegov.org"
 
 GIT_SHA="${1:-}"
 XBOARD_IMAGE="${2:-}"
@@ -52,6 +54,20 @@ wait_for_healthy() {
         sleep 2
     done
     return 1
+}
+
+refresh_bunkerweb_upstream() {
+    [ "$(docker inspect --format '{{.State.Status}}' "$BUNKERWEB" 2>/dev/null || true)" = "running" ] || fail "$BUNKERWEB is not running"
+    docker exec "$BUNKERWEB" nginx -t >/dev/null
+    docker exec "$BUNKERWEB" nginx -s reload >/dev/null
+    for _ in $(seq 1 30); do
+        if curl --fail --silent --show-error --resolve "$PANEL_HOST:443:127.0.0.1" "https://$PANEL_HOST/healthz" >/dev/null; then
+            log "BunkerWeb resolved the current theme upstream"
+            return 0
+        fi
+        sleep 2
+    done
+    fail "BunkerWeb did not converge on the current theme upstream"
 }
 
 is_immutable_ghcr_image() {
@@ -200,6 +216,7 @@ fi
 docker exec xboard-app wget -q -O /dev/null http://127.0.0.1:7001/
 docker exec xboard-theme wget -q -O /dev/null http://127.0.0.1/healthz
 "$TARGET_DIR/bunkerweb/apply-mcp-compat.sh" "$TARGET_DIR/bunkerweb/xboard-mcp.conf"
+refresh_bunkerweb_upstream
 
 log "production deployment complete"
 compose ps

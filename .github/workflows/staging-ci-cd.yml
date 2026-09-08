@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: ["**"]
   workflow_dispatch:
+    inputs:
+      dk_theme_image:
+        description: Immutable DK Theme GHCR image reference for this full-stack rebuild. Defaults to the staging Environment variable.
+        required: false
+        type: string
+      xboard_admin_image:
+        description: Immutable Xboard-Admin GHCR image reference for this full-stack rebuild. Defaults to the staging Environment variable.
+        required: false
+        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -172,7 +181,8 @@ jobs:
       SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       XBOARD_IMAGE: ghcr.io/voidintheshell/xboard@${{ needs.build-and-push.outputs.digest }}
-      DK_THEME_IMAGE: ghcr.io/voidintheshell/dk_theme:main
+      DK_THEME_IMAGE: ${{ inputs.dk_theme_image || vars.STAGING_DK_THEME_IMAGE }}
+      XBOARD_ADMIN_IMAGE: ${{ inputs.xboard_admin_image || vars.STAGING_XBOARD_ADMIN_IMAGE }}
       REMOTE_BUNDLE: /home/beihai/docker/.incoming/xboard-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout deployment files
@@ -197,6 +207,8 @@ jobs:
           : "${TEST_USER_EMAIL:?STAGING_TEST_USER_EMAIL is required}"
           : "${TEST_USER_PASSWORD:?STAGING_TEST_USER_PASSWORD is required}"
           : "${SERVER_TOKEN:?STAGING_SERVER_TOKEN is required}"
+          : "${DK_THEME_IMAGE:?STAGING_DK_THEME_IMAGE or workflow_dispatch dk_theme_image is required}"
+          : "${XBOARD_ADMIN_IMAGE:?STAGING_XBOARD_ADMIN_IMAGE or workflow_dispatch xboard_admin_image is required}"
           : "${SSH_PRIVATE_KEY:?STAGING_SSH_PRIVATE_KEY is required}"
           : "${SSH_KNOWN_HOSTS:?STAGING_SSH_KNOWN_HOSTS is required}"
           if [ "${ADMIN_PATH}" != 'unitedearthgov' ]; then
@@ -211,6 +223,23 @@ jobs:
             echo "STAGING_TEST_USER_PASSWORD must contain at least 8 characters" >&2
             exit 1
           fi
+          is_immutable_ghcr_image() {
+            local image="$1"
+            local repository="$2"
+            [[ "${image}" =~ ^ghcr\.io/voidintheshell/${repository}@sha256:[0-9a-f]{64}$ ]]
+          }
+          is_immutable_ghcr_image "${XBOARD_IMAGE}" xboard || {
+            echo "XBOARD_IMAGE must be an immutable xboard GHCR digest" >&2
+            exit 1
+          }
+          is_immutable_ghcr_image "${DK_THEME_IMAGE}" dk_theme || {
+            echo "DK_THEME_IMAGE must be an immutable DK Theme GHCR digest" >&2
+            exit 1
+          }
+          is_immutable_ghcr_image "${XBOARD_ADMIN_IMAGE}" xboard-admin || {
+            echo "XBOARD_ADMIN_IMAGE must be an immutable Xboard-Admin GHCR digest" >&2
+            exit 1
+          }
 
       - name: Prepare SSH and deployment bundle
         shell: bash
@@ -233,6 +262,7 @@ jobs:
           {
             printf 'XBOARD_IMAGE=%s\n' "${XBOARD_IMAGE}"
             printf 'DK_THEME_IMAGE=%s\n' "${DK_THEME_IMAGE}"
+            printf 'XBOARD_ADMIN_IMAGE=%s\n' "${XBOARD_ADMIN_IMAGE}"
             printf 'STAGING_ADMIN_ACCOUNT=%s\n' "${ADMIN_ACCOUNT}"
             printf 'STAGING_TEST_USER_EMAIL=%s\n' "${TEST_USER_EMAIL}"
             printf 'STAGING_PANEL_URL=%s\n' "${PANEL_URL}"
@@ -272,8 +302,9 @@ jobs:
           trap 'rm -f -- "${admin_page}" "${login_request}" "${login_response}"' EXIT
           curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 \
             "${PANEL_URL}/${ADMIN_PATH}" > "${admin_page}"
-          grep --fixed-strings '<title>XBoard</title>' "${admin_page}" > /dev/null
-          grep --fixed-strings '/assets/admin/' "${admin_page}" > /dev/null
+          grep --fixed-strings '<title>XBoard Admin</title>' "${admin_page}" > /dev/null
+          grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${admin_page}" > /dev/null
+          grep --fixed-strings '/unitedearthgov/assets/' "${admin_page}" > /dev/null
           jq -n --arg email "${TEST_USER_EMAIL}" --arg password "${TEST_USER_PASSWORD}" \
             '{email: $email, password: $password}' > "${login_request}"
           login_status=$(curl --silent --show-error --output "${login_response}" --write-out '%{http_code}' \

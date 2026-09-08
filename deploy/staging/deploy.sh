@@ -52,6 +52,12 @@ wait_for_healthy() {
     return 1
 }
 
+is_immutable_ghcr_image() {
+    local image="$1"
+    local repository="$2"
+    [[ "$image" =~ ^ghcr\.io/voidintheshell/${repository}@sha256:[0-9a-f]{64}$ ]]
+}
+
 [ -n "$BUNDLE_DIR" ] || fail "bundle directory argument is required"
 [ -n "$REGISTRY_USER" ] || fail "registry user argument is required"
 
@@ -117,8 +123,13 @@ install -m 600 /dev/null "$TARGET_DIR/.env"
 
 XBOARD_IMAGE=$(sed -n 's/^XBOARD_IMAGE=//p' "$TARGET_DIR/.deploy.env" | tail -1)
 DK_THEME_IMAGE=$(sed -n 's/^DK_THEME_IMAGE=//p' "$TARGET_DIR/.deploy.env" | tail -1)
+XBOARD_ADMIN_IMAGE=$(sed -n 's/^XBOARD_ADMIN_IMAGE=//p' "$TARGET_DIR/.deploy.env" | tail -1)
 [ -n "$XBOARD_IMAGE" ] || fail "XBOARD_IMAGE is missing from deploy.env"
 [ -n "$DK_THEME_IMAGE" ] || fail "DK_THEME_IMAGE is missing from deploy.env"
+[ -n "$XBOARD_ADMIN_IMAGE" ] || fail "XBOARD_ADMIN_IMAGE is missing from deploy.env"
+is_immutable_ghcr_image "$XBOARD_IMAGE" xboard || fail "XBOARD_IMAGE must be an immutable xboard GHCR digest"
+is_immutable_ghcr_image "$DK_THEME_IMAGE" dk_theme || fail "DK_THEME_IMAGE must be an immutable DK Theme GHCR digest"
+is_immutable_ghcr_image "$XBOARD_ADMIN_IMAGE" xboard-admin || fail "XBOARD_ADMIN_IMAGE must be an immutable Xboard-Admin GHCR digest"
 
 AUTH_DIR=$(mktemp -d "/tmp/xboard-docker-auth.XXXXXX")
 ANON_DIR=$(mktemp -d "/tmp/xboard-docker-anon.XXXXXX")
@@ -133,12 +144,18 @@ unset REGISTRY_TOKEN
 
 log "pulling immutable panel image"
 sudo -n docker --config "$AUTH_DIR" pull "$XBOARD_IMAGE"
-log "pulling current public theme image"
+log "pulling immutable theme image"
 sudo -n docker --config "$ANON_DIR" pull "$DK_THEME_IMAGE"
+log "pulling immutable administrator frontend image"
+sudo -n docker --config "$AUTH_DIR" pull "$XBOARD_ADMIN_IMAGE"
 
 THEME_DIGEST=$(sudo -n docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$DK_THEME_IMAGE" | grep '^ghcr.io/voidintheshell/dk_theme@sha256:' | head -1)
 [ -n "$THEME_DIGEST" ] || fail "could not resolve the theme image digest"
 set_env_value "$TARGET_DIR/.deploy.env" "DK_THEME_IMAGE" "$THEME_DIGEST"
+
+ADMIN_DIGEST=$(sudo -n docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$XBOARD_ADMIN_IMAGE" | grep '^ghcr.io/voidintheshell/xboard-admin@sha256:' | head -1)
+[ -n "$ADMIN_DIGEST" ] || fail "could not resolve the administrator image digest"
+set_env_value "$TARGET_DIR/.deploy.env" "XBOARD_ADMIN_IMAGE" "$ADMIN_DIGEST"
 
 compose() {
     sudo -n docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
@@ -159,22 +176,23 @@ sudo -n docker exec xboard-app test -S /data/redis.sock || fail "the embedded Re
 log "creating the deterministic staging node record"
 compose run --rm bootstrap php artisan xboard:staging-bootstrap --no-interaction
 
-log "restarting the panel to load the new settings, then starting the theme"
+log "restarting the backend to load the new settings, then starting the two frontend containers"
 compose restart xboard
 if ! wait_for_healthy xboard-app; then
     compose ps || true
     compose logs --tail 160 xboard || true
     fail "the staging panel did not become healthy after bootstrap"
 fi
-compose up -d theme
+compose up -d admin theme
 
-if ! wait_for_healthy xboard-theme; then
+if ! wait_for_healthy xboard-admin || ! wait_for_healthy xboard-theme; then
     compose ps || true
-    compose logs --tail 160 xboard theme || true
+    compose logs --tail 160 xboard admin theme || true
     fail "one or more staging containers did not become healthy"
 fi
 
 sudo -n docker exec xboard-app wget -q -O /dev/null http://127.0.0.1:7001/
+sudo -n docker exec xboard-admin wget -q -O /dev/null http://127.0.0.1/healthz
 sudo -n docker exec xboard-theme wget -q -O /dev/null http://127.0.0.1/healthz
 sudo -n docker image prune -f >/dev/null
 

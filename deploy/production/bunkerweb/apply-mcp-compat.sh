@@ -65,7 +65,7 @@ error = Database(logging.getLogger("xboard-mcp-compat")).upsert_custom_config(
 if error:
     raise SystemExit(error)
 PY'
-    docker exec "$SCHEDULER" rm -f /tmp/xboard-mcp-compat.conf
+    docker exec -u 0 "$SCHEDULER" rm -f /tmp/xboard-mcp-compat.conf
 fi
 
 for _ in $(seq 1 45); do

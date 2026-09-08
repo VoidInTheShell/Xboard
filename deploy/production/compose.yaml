@@ -1,4 +1,4 @@
-name: gjhk-xboard
+name: jpgreen-xboard
 
 x-xboard-volumes: &xboard-volumes
   - ./.env:/www/.env
@@ -7,7 +7,7 @@ x-xboard-volumes: &xboard-volumes
   - ./uploads:/www/storage/app/public
   - ./themes:/www/storage/theme
   - ./plugins:/www/plugins
-  - redis-data:/data
+  - ./redis:/data
 
 services:
   xboard:
@@ -22,12 +22,13 @@ services:
       RESOURCE_PROFILE: minimal
       ENABLE_WEB: "true"
       ENABLE_HORIZON: "true"
+      ENABLE_REDIS: "true"
       ENABLE_WS_SERVER: "true"
       ENABLE_CADDY: "true"
       docker: "true"
     networks:
       - xboard-internal
-    mem_limit: 448m
+    mem_limit: 512m
     mem_reservation: 256m
     cpus: 1.0
     pids_limit: 256
@@ -37,34 +38,36 @@ services:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:7001/ || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 10
-      start_period: 60s
+      retries: 12
+      start_period: 75s
 
   bootstrap:
     image: ${XBOARD_IMAGE:?XBOARD_IMAGE is required}
     profiles: ["bootstrap"]
     restart: "no"
     init: true
-    volumes: *xboard-volumes
+    volumes:
+      - ./.env:/www/.env
+      - ./data:/www/.docker/.data
+      - ./logs:/www/storage/logs
+      - ./uploads:/www/storage/app/public
+      - ./themes:/www/storage/theme
+      - ./plugins:/www/plugins
+      - ./redis:/data
+      - ./bootstrap:/bootstrap:ro
+      - ./runtime-secrets:/runtime-secrets
     environment:
-      APP_ENV: staging
-      APP_URL: ${STAGING_PANEL_URL:?STAGING_PANEL_URL is required}
+      APP_ENV: production
+      APP_URL: ${PRODUCTION_PANEL_URL:?PRODUCTION_PANEL_URL is required}
       ENABLE_SQLITE: "true"
       ENABLE_REDIS: "true"
-      ADMIN_ACCOUNT: ${STAGING_ADMIN_ACCOUNT:?STAGING_ADMIN_ACCOUNT is required}
+      ADMIN_ACCOUNT: ${PRODUCTION_ADMIN_ACCOUNT:?PRODUCTION_ADMIN_ACCOUNT is required}
       ADMIN_PASSWORD_FILE: /run/secrets/admin_password
       SERVER_TOKEN_FILE: /run/secrets/server_token
-      STAGING_TEST_USER_PASSWORD_FILE: /run/secrets/test_user_password
-      STAGING_BOOTSTRAP_CONFIRM: "1"
-      STAGING_PANEL_URL: ${STAGING_PANEL_URL:?STAGING_PANEL_URL is required}
-      STAGING_ADMIN_PATH: ${STAGING_ADMIN_PATH:?STAGING_ADMIN_PATH is required}
-      STAGING_TEST_USER_EMAIL: ${STAGING_TEST_USER_EMAIL:?STAGING_TEST_USER_EMAIL is required}
-      STAGING_NODE_NAME: ${STAGING_NODE_NAME:-US2 Staging}
-      STAGING_NODE_HOST: ${STAGING_NODE_HOST:?STAGING_NODE_HOST is required}
-      STAGING_NODE_ID: ${STAGING_NODE_ID:-1}
-      STAGING_NODE_PUBLIC_PORT: ${STAGING_NODE_PUBLIC_PORT:-443}
-      STAGING_NODE_LISTEN_PORT: ${STAGING_NODE_LISTEN_PORT:-30080}
-      STAGING_NODE_WS_PATH: ${STAGING_NODE_WS_PATH:?STAGING_NODE_WS_PATH is required}
+      TEST_USER_PASSWORD_FILE: /run/secrets/test_user_password
+      PRODUCTION_TEST_USER_EMAIL: ${PRODUCTION_TEST_USER_EMAIL:?PRODUCTION_TEST_USER_EMAIL is required}
+      MCP_KEY_OUTPUT_FILE: /runtime-secrets/xboard_mcp_key
+      PRODUCTION_BOOTSTRAP_CONFIRM: "1"
       docker: "true"
     secrets:
       - admin_password
@@ -89,7 +92,7 @@ services:
       - /tmp
     networks:
       - xboard-internal
-      - appnet
+      - bw-services
     mem_limit: 32m
     mem_reservation: 8m
     cpus: 0.25
@@ -103,13 +106,10 @@ services:
       retries: 5
       start_period: 10s
 
-volumes:
-  redis-data:
-
 networks:
   xboard-internal:
     internal: true
-  appnet:
+  bw-services:
     external: true
 
 secrets:

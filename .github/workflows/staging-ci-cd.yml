@@ -11,8 +11,13 @@ on:
         description: Immutable DK Theme GHCR image reference for this full-stack rebuild. Defaults to the staging Environment variable.
         required: false
         type: string
-      xboard_admin_image:
-        description: Immutable Xboard-Admin GHCR image reference for this full-stack rebuild. Defaults to the staging Environment variable.
+      reset_jpgreen_data:
+        description: Move the existing JPGREEN Xboard data to a protected backup and create a fresh production database.
+        required: false
+        default: false
+        type: boolean
+      reset_confirmation:
+        description: Type RESET JPGREEN XBOARD DATA when reset_jpgreen_data is enabled.
         required: false
         type: string
 
@@ -73,6 +78,58 @@ jobs:
         run: |
           docker run --rm xboard-ci:${GITHUB_SHA} php artisan list --format=json > /tmp/artisan.json
           grep -q 'xboard:staging-bootstrap' /tmp/artisan.json
+
+      - name: Validate deployment assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash -n deploy/staging/deploy.sh
+          bash -n deploy/production/deploy.sh
+          bash -n deploy/production/bunkerweb/apply-mcp-compat.sh
+          docker compose -f deploy/staging/compose.yaml config --no-interpolate > /dev/null
+          docker compose -f deploy/production/compose.yaml config --no-interpolate > /dev/null
+          docker run --rm --entrypoint php \
+            --volume "${GITHUB_WORKSPACE}/deploy/production/bootstrap/production-bootstrap.php:/tmp/production-bootstrap.php:ro" \
+          xboard-ci:${GITHUB_SHA} -l /tmp/production-bootstrap.php
+          grep -q '^# XBOARD-MCP-COMPAT$' deploy/production/bunkerweb/xboard-mcp.conf
+
+      - name: Smoke-test production bootstrap with disposable data
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --rm --entrypoint sh \
+            --volume "${GITHUB_WORKSPACE}/deploy/production/bootstrap/production-bootstrap.php:/bootstrap/production-bootstrap.php:ro" \
+            --tmpfs /www/.docker/.data \
+            --tmpfs /data \
+            --tmpfs /runtime-secrets \
+            --env APP_ENV=production \
+            --env APP_URL=https://validation.invalid \
+            --env ENABLE_SQLITE=true \
+            --env ENABLE_REDIS=true \
+            --env ADMIN_ACCOUNT=admin@validation.invalid \
+            --env ADMIN_PASSWORD_FILE=/tmp/admin_password \
+            --env SERVER_TOKEN_FILE=/tmp/server_token \
+            --env TEST_USER_PASSWORD_FILE=/tmp/test_password \
+            --env PRODUCTION_TEST_USER_EMAIL=test@validation.invalid \
+            --env MCP_KEY_OUTPUT_FILE=/runtime-secrets/xboard_mcp_key \
+            --env PRODUCTION_BOOTSTRAP_CONFIRM=1 \
+            xboard-ci:${GITHUB_SHA} -ec '
+              install -m 600 /dev/null /tmp/admin_password
+              install -m 600 /dev/null /tmp/test_password
+              install -m 600 /dev/null /tmp/server_token
+              printf %s ValidationAdmin1234 > /tmp/admin_password
+              printf %s ValidationUser1234 > /tmp/test_password
+              printf %s 0123456789abcdef0123456789abcdef > /tmp/server_token
+              install -m 600 /dev/null /www/.env
+              php artisan xboard:install --no-interaction > /tmp/install.log
+              redis-server --unixsocket /data/redis.sock --unixsocketperm 770 --port 0 --daemonize yes --dir /data
+              php /bootstrap/production-bootstrap.php
+              test "$(stat -c %a /runtime-secrets/xboard_mcp_key)" = 600
+              test "$(wc -c < /runtime-secrets/xboard_mcp_key)" -gt 40
+              test "$(sqlite3 /www/.docker/.data/database.sqlite "select count(*) from v2_user;")" = 2
+              test "$(sqlite3 /www/.docker/.data/database.sqlite "select count(*) from v2_server_group;")" = 1
+              test "$(sqlite3 /www/.docker/.data/database.sqlite "select count(*) from v2_mcp_key where revoked_at is null;")" = 1
+            '
 
   build-and-push:
     name: Publish multi-architecture image
@@ -139,16 +196,7 @@ jobs:
       startsWith(github.ref, 'refs/heads/') &&
       (
         github.event_name == 'workflow_dispatch' ||
-        (
-          github.event_name == 'push' &&
-          (
-            github.ref == 'refs/heads/main' ||
-            github.ref == 'refs/heads/master' ||
-            github.ref == 'refs/heads/dev' ||
-            github.ref == 'refs/heads/new-dev' ||
-            startsWith(github.ref, 'refs/heads/staging/')
-          )
-        )
+        (github.event_name == 'push' && github.ref == 'refs/heads/dev')
       )
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -182,7 +230,6 @@ jobs:
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       XBOARD_IMAGE: ghcr.io/voidintheshell/xboard@${{ needs.build-and-push.outputs.digest }}
       DK_THEME_IMAGE: ${{ inputs.dk_theme_image || vars.STAGING_DK_THEME_IMAGE }}
-      XBOARD_ADMIN_IMAGE: ${{ inputs.xboard_admin_image || vars.STAGING_XBOARD_ADMIN_IMAGE }}
       REMOTE_BUNDLE: /home/beihai/docker/.incoming/xboard-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout deployment files
@@ -208,7 +255,6 @@ jobs:
           : "${TEST_USER_PASSWORD:?STAGING_TEST_USER_PASSWORD is required}"
           : "${SERVER_TOKEN:?STAGING_SERVER_TOKEN is required}"
           : "${DK_THEME_IMAGE:?STAGING_DK_THEME_IMAGE or workflow_dispatch dk_theme_image is required}"
-          : "${XBOARD_ADMIN_IMAGE:?STAGING_XBOARD_ADMIN_IMAGE or workflow_dispatch xboard_admin_image is required}"
           : "${SSH_PRIVATE_KEY:?STAGING_SSH_PRIVATE_KEY is required}"
           : "${SSH_KNOWN_HOSTS:?STAGING_SSH_KNOWN_HOSTS is required}"
           if [ "${ADMIN_PATH}" != 'unitedearthgov' ]; then
@@ -236,10 +282,6 @@ jobs:
             echo "DK_THEME_IMAGE must be an immutable DK Theme GHCR digest" >&2
             exit 1
           }
-          is_immutable_ghcr_image "${XBOARD_ADMIN_IMAGE}" xboard-admin || {
-            echo "XBOARD_ADMIN_IMAGE must be an immutable Xboard-Admin GHCR digest" >&2
-            exit 1
-          }
 
       - name: Prepare SSH and deployment bundle
         shell: bash
@@ -262,7 +304,6 @@ jobs:
           {
             printf 'XBOARD_IMAGE=%s\n' "${XBOARD_IMAGE}"
             printf 'DK_THEME_IMAGE=%s\n' "${DK_THEME_IMAGE}"
-            printf 'XBOARD_ADMIN_IMAGE=%s\n' "${XBOARD_ADMIN_IMAGE}"
             printf 'STAGING_ADMIN_ACCOUNT=%s\n' "${ADMIN_ACCOUNT}"
             printf 'STAGING_TEST_USER_EMAIL=%s\n' "${TEST_USER_EMAIL}"
             printf 'STAGING_PANEL_URL=%s\n' "${PANEL_URL}"
@@ -302,9 +343,8 @@ jobs:
           trap 'rm -f -- "${admin_page}" "${login_request}" "${login_response}"' EXIT
           curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 \
             "${PANEL_URL}/${ADMIN_PATH}" > "${admin_page}"
-          grep --fixed-strings '<title>XBoard Admin</title>' "${admin_page}" > /dev/null
-          grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${admin_page}" > /dev/null
-          grep --fixed-strings '/unitedearthgov/assets/' "${admin_page}" > /dev/null
+          grep --fixed-strings '<title>XBoard</title>' "${admin_page}" > /dev/null
+          grep --fixed-strings '/assets/admin/' "${admin_page}" > /dev/null
           jq -n --arg email "${TEST_USER_EMAIL}" --arg password "${TEST_USER_PASSWORD}" \
             '{email: $email, password: $password}' > "${login_request}"
           login_status=$(curl --silent --show-error --output "${login_response}" --write-out '%{http_code}' \
@@ -324,3 +364,180 @@ jobs:
             ssh -i "${SSH_DIR}/id_ed25519" -p "${SSH_PORT}" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${SSH_DIR}/known_hosts" "${SSH_USER}@${SSH_HOST}" "case '${REMOTE_BUNDLE}' in /home/beihai/docker/.incoming/xboard-*) rm -rf -- '${REMOTE_BUNDLE}' ;; *) exit 1 ;; esac"
           fi
           rm -rf -- "${RUNNER_TEMP}/xboard-bundle" "${SSH_DIR}"
+
+  deploy-production:
+    name: Deploy JPGREEN production
+    if: >-
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    concurrency:
+      group: production-${{ github.repository_id }}
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_PANEL_URL }}
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+      SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+      SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+      PANEL_URL: ${{ vars.PRODUCTION_PANEL_URL }}
+      ADMIN_PATH: ${{ vars.PRODUCTION_ADMIN_PATH }}
+      ADMIN_ACCOUNT: ${{ vars.PRODUCTION_ADMIN_ACCOUNT }}
+      TEST_USER_EMAIL: ${{ vars.PRODUCTION_TEST_USER_EMAIL }}
+      ADMIN_PASSWORD: ${{ secrets.PRODUCTION_ADMIN_PASSWORD }}
+      TEST_USER_PASSWORD: ${{ secrets.PRODUCTION_TEST_USER_PASSWORD }}
+      SERVER_TOKEN: ${{ secrets.PRODUCTION_SERVER_TOKEN }}
+      SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      XBOARD_IMAGE: ghcr.io/voidintheshell/xboard@${{ needs.build-and-push.outputs.digest }}
+      DK_THEME_IMAGE: ${{ vars.PRODUCTION_DK_THEME_IMAGE }}
+      RESET_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.reset_jpgreen_data && 'reset' || 'preserve' }}
+      RESET_CONFIRMATION: ${{ inputs.reset_confirmation || '' }}
+      REMOTE_BUNDLE: /home/beihai/docker/.incoming/xboard-production-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout production deployment files
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Validate production configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          : "${SSH_HOST:?PRODUCTION_SSH_HOST is required}"
+          : "${SSH_PORT:?PRODUCTION_SSH_PORT is required}"
+          : "${SSH_USER:?PRODUCTION_SSH_USER is required}"
+          : "${PANEL_URL:?PRODUCTION_PANEL_URL is required}"
+          : "${ADMIN_PATH:?PRODUCTION_ADMIN_PATH is required}"
+          : "${ADMIN_ACCOUNT:?PRODUCTION_ADMIN_ACCOUNT is required}"
+          : "${TEST_USER_EMAIL:?PRODUCTION_TEST_USER_EMAIL is required}"
+          : "${ADMIN_PASSWORD:?PRODUCTION_ADMIN_PASSWORD is required}"
+          : "${TEST_USER_PASSWORD:?PRODUCTION_TEST_USER_PASSWORD is required}"
+          : "${SERVER_TOKEN:?PRODUCTION_SERVER_TOKEN is required}"
+          : "${SSH_PRIVATE_KEY:?PRODUCTION_SSH_PRIVATE_KEY is required}"
+          : "${SSH_KNOWN_HOSTS:?PRODUCTION_SSH_KNOWN_HOSTS is required}"
+          : "${DK_THEME_IMAGE:?PRODUCTION_DK_THEME_IMAGE is required}"
+          test "${PANEL_URL}" = 'https://panel.uegov.org'
+          test "${ADMIN_PATH}" = 'unitedearthgov'
+          test "${ADMIN_ACCOUNT}" = 'beihai3body@uegov.org'
+          test "${TEST_USER_EMAIL}" = 'test@test.user'
+          test "${#ADMIN_PASSWORD}" -ge 8
+          test "${#TEST_USER_PASSWORD}" -ge 8
+          test "${#SERVER_TOKEN}" -ge 32
+          [[ "${XBOARD_IMAGE}" =~ ^ghcr\.io/voidintheshell/xboard@sha256:[0-9a-f]{64}$ ]]
+          [[ "${DK_THEME_IMAGE}" =~ ^ghcr\.io/voidintheshell/dk_theme@sha256:[0-9a-f]{64}$ ]]
+          if [ "${RESET_MODE}" = 'reset' ]; then
+            test "${RESET_CONFIRMATION}" = 'RESET JPGREEN XBOARD DATA'
+          else
+            test "${RESET_MODE}" = 'preserve'
+            test -z "${RESET_CONFIRMATION}"
+          fi
+
+      - name: Prepare SSH and production deployment bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          SSH_DIR="${RUNNER_TEMP}/deploy-ssh"
+          install -d -m 700 "${SSH_DIR}"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > "${SSH_DIR}/id_ed25519"
+          printf '%s\n' "${SSH_KNOWN_HOSTS}" > "${SSH_DIR}/known_hosts"
+
+          BUNDLE_DIR="${RUNNER_TEMP}/xboard-production-bundle"
+          install -d -m 700 "${BUNDLE_DIR}"
+          install -m 644 deploy/production/compose.yaml "${BUNDLE_DIR}/compose.yaml"
+          install -m 700 deploy/production/deploy.sh "${BUNDLE_DIR}/deploy.sh"
+          install -m 644 deploy/production/bootstrap/production-bootstrap.php "${BUNDLE_DIR}/production-bootstrap.php"
+          install -m 644 deploy/production/bunkerweb/xboard-mcp.conf "${BUNDLE_DIR}/xboard-mcp.conf"
+          install -m 700 deploy/production/bunkerweb/apply-mcp-compat.sh "${BUNDLE_DIR}/apply-mcp-compat.sh"
+          printf '%s' "${ADMIN_PASSWORD}" > "${BUNDLE_DIR}/admin_password"
+          printf '%s' "${SERVER_TOKEN}" > "${BUNDLE_DIR}/server_token"
+          printf '%s' "${TEST_USER_PASSWORD}" > "${BUNDLE_DIR}/test_user_password"
+          chmod 600 "${BUNDLE_DIR}/admin_password" "${BUNDLE_DIR}/server_token" "${BUNDLE_DIR}/test_user_password"
+          {
+            printf 'XBOARD_IMAGE=%s\n' "${XBOARD_IMAGE}"
+            printf 'DK_THEME_IMAGE=%s\n' "${DK_THEME_IMAGE}"
+            printf 'PRODUCTION_PANEL_URL=%s\n' "${PANEL_URL}"
+            printf 'PRODUCTION_ADMIN_ACCOUNT=%s\n' "${ADMIN_ACCOUNT}"
+            printf 'PRODUCTION_TEST_USER_EMAIL=%s\n' "${TEST_USER_EMAIL}"
+          } > "${BUNDLE_DIR}/deploy.env"
+          chmod 600 "${BUNDLE_DIR}/deploy.env"
+
+      - name: Upload and deploy production panel
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SSH_TARGET="${SSH_USER}@${SSH_HOST}"
+          SSH_DIR="${RUNNER_TEMP}/deploy-ssh"
+          SSH_ARGS=(-i "${SSH_DIR}/id_ed25519" -p "${SSH_PORT}" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${SSH_DIR}/known_hosts")
+          SCP_ARGS=(-i "${SSH_DIR}/id_ed25519" -P "${SSH_PORT}" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${SSH_DIR}/known_hosts")
+
+          ssh "${SSH_ARGS[@]}" "${SSH_TARGET}" "install -d -m 700 '${REMOTE_BUNDLE}'"
+          scp "${SCP_ARGS[@]}" "${RUNNER_TEMP}/xboard-production-bundle/"* "${SSH_TARGET}:${REMOTE_BUNDLE}/"
+          printf '%s\n' "${GHCR_TOKEN}" | ssh "${SSH_ARGS[@]}" "${SSH_TARGET}" \
+            "chmod 700 '${REMOTE_BUNDLE}/deploy.sh' && '${REMOTE_BUNDLE}/deploy.sh' '${REMOTE_BUNDLE}' '${GITHUB_ACTOR}' '${RESET_MODE}'"
+
+      - name: Verify public production entrypoints
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          admin_page=$(mktemp)
+          logo_file=$(mktemp)
+          login_request=$(mktemp)
+          login_response=$(mktemp)
+          mcp_response=$(mktemp)
+          trap 'rm -f -- "${admin_page}" "${logo_file}" "${login_request}" "${login_response}" "${mcp_response}"' EXIT
+
+          curl --fail --silent --show-error --retry 18 --retry-all-errors --retry-delay 5 "${PANEL_URL}/healthz" > /dev/null
+          curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 "${PANEL_URL}/" > /dev/null
+          curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 \
+            "${PANEL_URL}/${ADMIN_PATH}" > "${admin_page}"
+          grep --fixed-strings '<title>XBoard</title>' "${admin_page}" > /dev/null
+          grep --fixed-strings '/assets/admin/' "${admin_page}" > /dev/null
+
+          logo_type=$(curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 \
+            --output "${logo_file}" --write-out '%{content_type}' "${PANEL_URL}/dk-theme/ueg-mark.png")
+          test -s "${logo_file}"
+          case "${logo_type}" in image/png*) ;; *) exit 1 ;; esac
+
+          jq -n --arg email "${TEST_USER_EMAIL}" --arg password "${TEST_USER_PASSWORD}" \
+            '{email: $email, password: $password}' > "${login_request}"
+          login_status=$(curl --silent --show-error --output "${login_response}" --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' --data-binary "@${login_request}" \
+            "${PANEL_URL}/api/v1/passport/auth/login")
+          test "${login_status}" = '200'
+          jq -e '.data.auth_data | type == "string" and startswith("Bearer ")' "${login_response}" > /dev/null
+
+          mcp_status=$(curl --silent --show-error --output "${mcp_response}" --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --data-binary '{"jsonrpc":"2.0","id":"workflow-probe","method":"ping","params":{}}' \
+            "${PANEL_URL}/api/mcp")
+          test "${mcp_status}" = '401'
+
+      - name: Verify production runtime isolation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SSH_TARGET="${SSH_USER}@${SSH_HOST}"
+          SSH_DIR="${RUNNER_TEMP}/deploy-ssh"
+          SSH_ARGS=(-i "${SSH_DIR}/id_ed25519" -p "${SSH_PORT}" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${SSH_DIR}/known_hosts")
+          ssh "${SSH_ARGS[@]}" "${SSH_TARGET}" \
+            "sudo -n docker inspect xboard-app xboard-theme >/dev/null && ! sudo -n docker ps -a --format '{{.Names}}' | grep -qx xboard-admin && sudo -n docker exec bunkerweb-bunkerweb-1 sh -lc 'nginx -T 2>/dev/null | grep -q \"^# XBOARD-MCP-COMPAT$\"'"
+
+      - name: Remove sensitive production deployment bundle
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          SSH_DIR="${RUNNER_TEMP}/deploy-ssh"
+          if [ -f "${SSH_DIR}/id_ed25519" ] && [ -n "${SSH_HOST:-}" ] && [ -n "${REMOTE_BUNDLE:-}" ]; then
+            ssh -i "${SSH_DIR}/id_ed25519" -p "${SSH_PORT}" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${SSH_DIR}/known_hosts" "${SSH_USER}@${SSH_HOST}" \
+              "case '${REMOTE_BUNDLE}' in /home/beihai/docker/.incoming/xboard-production-*) rm -rf -- '${REMOTE_BUNDLE}' ;; *) exit 1 ;; esac"
+          fi
+          rm -rf -- "${RUNNER_TEMP}/xboard-production-bundle" "${SSH_DIR}"

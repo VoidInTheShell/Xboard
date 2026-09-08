@@ -1,16 +1,15 @@
 # Xboard staging deployment
 
-This directory defines the disposable Xboard test stack on GJHK. Pushes to the integration branches `main`, `master`, `dev`, and `new-dev`, plus opt-in `staging/**` branches, deploy automatically. Any other branch can deploy only through `workflow_dispatch` selected on that branch. Every deployment uses prebuilt GHCR images; the server never compiles source code.
+This directory defines the disposable Xboard test stack on GJHK. Pushes to `dev` deploy automatically. Any other branch can deploy only through `workflow_dispatch` selected on that branch. Every deployment uses prebuilt GHCR images; the server never compiles source code. After a feature-branch acceptance run, dispatch `dev` again so the shared environment returns to its development baseline.
 
-Every branch push and pull request builds a CI-only image with Composer development dependencies and runs the PHP test suite. Published runtime images keep development dependencies excluded. A full stack rebuild consumes immutable GHCR digests for the backend, theme, and standalone administrator frontend; it never resolves a mutable frontend tag on GJHK. Deployments also verify that the disposable test user can log in through the public API without printing the returned authentication token.
+Every branch push and pull request builds a CI-only image with Composer development dependencies and runs the PHP test suite. Published runtime images keep development dependencies excluded. A full stack rebuild consumes immutable GHCR digests for the backend and theme; it never resolves a mutable frontend tag on GJHK. Deployments also verify that the built-in Xboard administrator frontend is served and that the disposable test user can log in through the public API without printing the returned authentication token.
 
 ## Runtime layout
 
 - Target directory: `/home/beihai/docker/xboard`
 - Reverse proxy network: existing external Docker network `appnet`
 - Public entrypoint: existing Nginx Proxy Manager host for `https://xboard.uegov.org`
-- Backend/API container: `xboard-app`, reachable only on the internal Docker network
-- Administrator frontend container: `xboard-admin`, reachable only on the internal Docker network
+- Backend/API and built-in administrator frontend container: `xboard-app`, reachable only on the internal Docker network
 - User frontend and public gateway container: `xboard-theme`, joined to both the internal network and `appnet`
 - Database: disposable SQLite under `data/`
 - Cache/queue: the image's embedded Redis with a named Compose volume
@@ -44,11 +43,10 @@ Environment variables:
 - `STAGING_NODE_PUBLIC_PORT`
 - `STAGING_NODE_LISTEN_PORT`
 - `STAGING_DK_THEME_IMAGE`: accepted immutable `ghcr.io/voidintheshell/dk_theme@sha256:...` reference used for a full stack bootstrap or rebuild
-- `STAGING_XBOARD_ADMIN_IMAGE`: accepted immutable `ghcr.io/voidintheshell/xboard-admin@sha256:...` reference used for a full stack bootstrap or rebuild
 
 The same value stored as `STAGING_SERVER_TOKEN` here must be stored as `STAGING_API_KEY` in the Xboard-Node repository's `staging` environment. The same `STAGING_NODE_WS_PATH` secret must also be present in both repositories; neither value may be printed in workflow logs.
 
-The two frontend image variables are non-sensitive but must be exact digest references from the accepted DK Theme and Xboard-Admin publish jobs. A `workflow_dispatch` full rebuild may override either one with another exact digest for branch acceptance. Do not use `:main`, `:latest`, or a branch tag. The standalone frontend workflows update one Compose service at a time after this full stack exists; refresh these variables to the accepted frontend digests before a later complete Xboard rebuild so it cannot roll a frontend back.
+The theme image variable is non-sensitive but must be an exact digest reference from an accepted DK Theme publish job. A `workflow_dispatch` full rebuild may override it with another exact digest for branch acceptance. Do not use `:main`, `:latest`, or a branch tag. Refresh the variable to the accepted DK Theme `dev` digest before a later complete Xboard rebuild so it cannot roll the theme back.
 
 The fresh database creates node `1` as VLESS over WebSocket, a dedicated `Staging Access` server group, and the disposable test user assigned to that group. Its public endpoint is the DNS hostname on port `443`; TLS is terminated by the US2 reverse-proxy/cover entrypoint, while Xboard-Node listens without TLS on the private `STAGING_NODE_LISTEN_PORT`. This split is represented by the fork-specific `protocol_settings.server_tls` field so client subscriptions keep TLS enabled without requiring the node process to own port 443.
 
@@ -63,5 +61,5 @@ To deploy a feature branch, open `Docker Build, Publish and Deploy`, choose **Ru
 ```bash
 cd /home/beihai/docker/xboard
 sudo docker compose --env-file .deploy.env -f compose.yaml ps
-sudo docker compose --env-file .deploy.env -f compose.yaml logs --tail 200 xboard admin theme
+sudo docker compose --env-file .deploy.env -f compose.yaml logs --tail 200 xboard theme
 ```

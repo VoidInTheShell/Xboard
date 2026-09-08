@@ -3,7 +3,12 @@
 namespace App\Http\Middleware;
 
 use App\Models\AdminAuditLog;
+use App\Models\McpKey;
+use App\Exceptions\ChangeVersionConflictException;
+use App\Services\AdminOperationCatalog;
+use App\Services\ChangeEventService;
 use Closure;
+use Illuminate\Support\Facades\DB;
 
 class RequestLog
 {
@@ -34,32 +39,100 @@ class RequestLog
             return $next($request);
         }
 
-        $response = $next($request);
+        $operation = app(AdminOperationCatalog::class)->describeRequest($request);
+        $isMutation = $operation !== null && !$operation['read_only'];
+        $initialTransactionLevel = DB::transactionLevel();
+
+        if ($isMutation) {
+            DB::beginTransaction();
+        }
 
         try {
+            if ($isMutation) {
+                app(ChangeEventService::class)->assertExpectedVersion($request);
+            }
+
+            $response = $next($request);
             $admin = $request->user();
             if (!$admin || !$admin->is_admin) {
+                $this->finishTransaction($isMutation, $initialTransactionLevel, false);
                 return $response;
             }
 
-            $action = $this->resolveAction($request->path());
-            $data = self::redactRequestData($request->all());
+            $successful = $response->getStatusCode() >= 200 && $response->getStatusCode() < 300;
+            if (!$successful) {
+                $this->finishTransaction($isMutation, $initialTransactionLevel, false);
+                return $response;
+            }
 
-            AdminAuditLog::insert([
+            $mcpKey = $request->attributes->get('mcp_key');
+            $changeEvents = app(ChangeEventService::class);
+            AdminAuditLog::query()->create([
                 'admin_id' => $admin->id,
-                'action' => $action,
+                'actor_type' => $mcpKey instanceof McpKey ? 'mcp' : 'admin',
+                'mcp_key_id' => $mcpKey instanceof McpKey ? $mcpKey->id : null,
+                'request_id' => $changeEvents->requestId($request),
+                'client_id' => $mcpKey instanceof McpKey ? null : $this->clientId($request),
+                'action' => $operation['id'] ?? $this->resolveAction($request->path()),
                 'method' => $request->method(),
                 'uri' => $request->getRequestUri(),
-                'request_data' => json_encode($data, JSON_UNESCAPED_UNICODE),
+                'request_data' => json_encode(self::redactRequestData($request->all()), JSON_UNESCAPED_UNICODE),
                 'ip' => $request->getClientIp(),
                 'created_at' => time(),
                 'updated_at' => time(),
             ]);
+
+            if ($isMutation) {
+                $changeEvents->commitMutation($request, $operation);
+            }
+
+            $this->finishTransaction($isMutation, $initialTransactionLevel, true);
+            return $response;
+        } catch (ChangeVersionConflictException $e) {
+            $this->finishTransaction($isMutation, $initialTransactionLevel, false);
+            return response()->json([
+                'status' => 'fail',
+                'message' => $e->getMessage(),
+                'data' => [
+                    'expected_version' => $e->expectedVersion,
+                    'current_version' => $e->currentVersion,
+                ],
+            ], 409);
         } catch (\Throwable $e) {
+            $this->finishTransaction($isMutation, $initialTransactionLevel, false);
+            if (!isset($response)) {
+                throw $e;
+            }
+
             \Log::warning('Audit log write failed: ' . $e->getMessage());
+            if ($isMutation) {
+                return response()->json([
+                    'status' => 'fail',
+                    'message' => '管理操作未提交：无法写入同步版本。',
+                ], 500);
+            }
+
+            return $response;
+        }
+    }
+
+    private function finishTransaction(bool $started, int $initialLevel, bool $commit): void
+    {
+        if (!$started || DB::transactionLevel() <= $initialLevel) {
+            return;
         }
 
-        return $response;
+        if ($commit) {
+            DB::commit();
+        } else {
+            DB::rollBack();
+        }
+    }
+
+    private function clientId($request): ?string
+    {
+        $value = $request->header('X-Xboard-Admin-Client-Id');
+        return is_string($value) && preg_match('/^[A-Za-z0-9_-]{1,64}$/', $value) ? $value : null;
     }
 
     private function resolveAction(string $path): string

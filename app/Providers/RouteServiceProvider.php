@@ -64,9 +64,17 @@ class RouteServiceProvider extends ServiceProvider
     protected function mapApiRoutes()
     {
         Route::group([
+            'prefix' => '/api',
+            'middleware' => 'api',
+            'namespace' => $this->namespace,
+        ], function ($router) {
+            $this->app->make('App\\Http\\Routes\\McpRoute')->map($router);
+        });
+
+        Route::group([
             'prefix' => '/api/v1',
             'middleware' => 'api',
-            'namespace' => $this->namespace
+            'namespace' => $this->namespace,
         ], function ($router) {
             foreach (glob(app_path('Http//Routes//V1') . '/*.php') as $file) {
                 $this->app->make('App\\Http\\Routes\\V1\\' . basename($file, '.php'))->map($router);
@@ -77,7 +85,7 @@ class RouteServiceProvider extends ServiceProvider
         Route::group([
             'prefix' => '/api/v2',
             'middleware' => 'api',
-            'namespace' => $this->namespace
+            'namespace' => $this->namespace,
         ], function ($router) {
             foreach (glob(app_path('Http//Routes//V2') . '/*.php') as $file) {
                 $this->app->make('App\\Http\\Routes\\V2\\' . basename($file, '.php'))->map($router);

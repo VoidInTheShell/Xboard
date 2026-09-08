@@ -76,6 +76,7 @@ class Kernel extends HttpKernel
         'client' => \App\Http\Middleware\Client::class,
         'staff' => \App\Http\Middleware\Staff::class,
         'log' => \App\Http\Middleware\RequestLog::class,
+        'mcp.auth' => \App\Http\Middleware\McpAuthenticate::class,
         'server' => \App\Http\Middleware\Server::class,
         'server.v2' => \App\Http\Middleware\ServerV2::class,
         'abilities' => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,

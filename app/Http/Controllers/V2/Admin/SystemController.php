@@ -103,10 +103,15 @@ class SystemController extends Controller
         $current = max(1, (int) $request->input('current', 1));
         $pageSize = max(10, (int) $request->input('page_size', 10));
 
-        $builder = AdminAuditLog::with('admin:id,email')
+        $builder = AdminAuditLog::with([
+                'admin:id,email',
+                'mcpKey:id,name,token_suffix',
+            ])
             ->orderBy('id', 'DESC')
             ->when($request->input('action'), fn($q, $v) => $q->where('action', $v))
             ->when($request->input('admin_id'), fn($q, $v) => $q->where('admin_id', $v))
+            ->when($request->input('actor_type'), fn($q, $v) => $q->where('actor_type', $v))
+            ->when($request->input('mcp_key_id'), fn($q, $v) => $q->where('mcp_key_id', $v))
             ->when($request->input('keyword'), function ($q, $keyword) {
                 $q->where(function ($q) use ($keyword) {
                     $q->where('uri', 'like', '%' . $keyword . '%')

@@ -18,6 +18,12 @@ class Admin
      */
     public function handle($request, Closure $next)
     {
+        $delegatedAdmin = $request->attributes->get('mcp_admin');
+        if ($delegatedAdmin instanceof User && $delegatedAdmin->is_admin) {
+            $request->setUserResolver(fn() => $delegatedAdmin);
+            return $next($request);
+        }
+
         /** @var User|null $user */
         $user = Auth::guard('sanctum')->user();
         

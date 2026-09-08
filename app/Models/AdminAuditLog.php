@@ -18,4 +18,9 @@ class AdminAuditLog extends Model
     {
         return $this->belongsTo(User::class, 'admin_id');
     }
+
+    public function mcpKey()
+    {
+        return $this->belongsTo(McpKey::class, 'mcp_key_id');
+    }
 }

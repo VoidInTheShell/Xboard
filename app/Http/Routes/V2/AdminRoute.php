@@ -22,6 +22,7 @@ use App\Http\Controllers\V2\Admin\PaymentController;
 use App\Http\Controllers\V2\Admin\SystemController;
 use App\Http\Controllers\V2\Admin\ThemeController;
 use App\Http\Controllers\V2\Admin\TrafficResetController;
+use App\Http\Controllers\V2\Admin\McpController;
 use Illuminate\Contracts\Routing\Registrar;
 
 class AdminRoute
@@ -278,6 +279,19 @@ class AdminRoute
                 $router->get('/getQueueMasters', '\\Laravel\\Horizon\\Http\\Controllers\\MasterSupervisorController@index');
                 $router->get('/getHorizonFailedJobs', [SystemController::class, 'getHorizonFailedJobs']);
                 $router->any('/getAuditLog', [SystemController::class, 'getAuditLog']);
+            });
+
+            // MCP control plane. Credential lifecycle remains available only to
+            // the browser admin API and is intentionally absent from MCP tools.
+            $router->group(['prefix' => 'mcp'], function ($router) {
+                $router->get('/settings', [McpController::class, 'settings']);
+                $router->post('/settings', [McpController::class, 'settings']);
+                $router->get('/keys', [McpController::class, 'keys']);
+                $router->post('/keys/create', [McpController::class, 'create']);
+                $router->post('/keys/rotate', [McpController::class, 'rotate']);
+                $router->post('/keys/revoke', [McpController::class, 'revoke']);
+                $router->get('/version', [McpController::class, 'version']);
+                $router->get('/events', [McpController::class, 'events']);
             });
 
             // Update

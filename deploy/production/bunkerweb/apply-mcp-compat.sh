@@ -17,6 +17,8 @@ fail() {
 [ -f "$CONFIG_FILE" ] || fail "configuration file is missing"
 grep -q '^# XBOARD-MCP-COMPAT$' "$CONFIG_FILE" || fail "configuration marker is missing"
 grep -q '^# XBOARD-NODE-CONTROL-COMPAT$' "$CONFIG_FILE" || fail "node control compatibility marker is missing"
+[ "$(grep -Fc 'proxy_intercept_errors off;' "$CONFIG_FILE")" = "3" ] \
+    || fail "JSON authentication responses must bypass the server error page"
 
 for container in "$SCHEDULER" "$BUNKERWEB" "$DATABASE"; do
     status=$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)

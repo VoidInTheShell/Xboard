@@ -2,6 +2,7 @@
 *.sh text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+deploy/production/bunkerweb/xboard-mcp.conf text eol=lf
 Dockerfile text eol=lf
 *.css linguist-vendored
 *.scss linguist-vendored

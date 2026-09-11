@@ -25,7 +25,10 @@ services:
       ENABLE_REDIS: "true"
       ENABLE_WS_SERVER: "true"
       ENABLE_CADDY: "true"
+      ADMIN_ROUTE_TOKEN_FILE: /run/secrets/admin_route_token
       docker: "true"
+    secrets:
+      - admin_route_token
     networks:
       - xboard-internal
     mem_limit: 512m
@@ -76,12 +79,41 @@ services:
     networks:
       - xboard-internal
 
+  admin:
+    image: ${XBOARD_ADMIN_IMAGE:?XBOARD_ADMIN_IMAGE is required}
+    container_name: xboard-admin
+    restart: unless-stopped
+    init: true
+    expose:
+      - "80"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    networks:
+      - xboard-internal
+    mem_limit: 64m
+    mem_reservation: 16m
+    cpus: 0.25
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   theme:
     image: ${DK_THEME_IMAGE:?DK_THEME_IMAGE is required}
     container_name: xboard-theme
     restart: unless-stopped
     depends_on:
       xboard:
+        condition: service_healthy
+      admin:
         condition: service_healthy
     expose:
       - "80"
@@ -90,6 +122,10 @@ services:
       - /var/cache/nginx
       - /var/run
       - /tmp
+    environment:
+      ADMIN_ROUTE_TOKEN_FILE: /run/secrets/admin_route_token
+    secrets:
+      - admin_route_token
     networks:
       - xboard-internal
       - bw-services
@@ -119,3 +155,5 @@ secrets:
     file: ./secrets/server_token
   test_user_password:
     file: ./secrets/test_user_password
+  admin_route_token:
+    file: ./secrets/admin_route_token

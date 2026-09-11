@@ -29,6 +29,12 @@ validate_actor() {
     [[ "$1" =~ ^[A-Za-z0-9-]{1,39}$ ]] || fail "invalid registry user"
 }
 
+validate_image_tag() {
+    local repository="$1"
+    local image="$2"
+    [[ "$image" =~ ^ghcr\.io/voidintheshell/${repository}:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || fail "invalid ${repository} image tag"
+}
+
 run_reset() {
     local sha="$1"
     shift
@@ -53,19 +59,20 @@ case "${ARGS[0]}" in
         printf 'principal=xboard-ci forced_command=ready\n'
         ;;
     deploy-xboard)
-        [ "${#ARGS[@]}" -eq 7 ] || fail "deploy-xboard arguments are invalid"
+        [ "${#ARGS[@]}" -eq 8 ] || fail "deploy-xboard arguments are invalid"
         validate_sha "${ARGS[1]}"
-        [[ "${ARGS[2]}" =~ ^ghcr\.io/voidintheshell/xboard@sha256:[0-9a-f]{64}$ ]] || fail "invalid Xboard image"
-        [[ "${ARGS[3]}" =~ ^ghcr\.io/voidintheshell/dk_theme@sha256:[0-9a-f]{64}$ ]] || fail "invalid theme image"
-        validate_actor "${ARGS[4]}"
-        case "${ARGS[5]}:${ARGS[6]}" in
+        validate_image_tag xboard "${ARGS[2]}"
+        validate_image_tag dk_theme "${ARGS[3]}"
+        validate_image_tag xboard-admin "${ARGS[4]}"
+        validate_actor "${ARGS[5]}"
+        case "${ARGS[6]}:${ARGS[7]}" in
             preserve:NO_RESET)
                 logger -t xboard-ci "operation=deploy-xboard sha=${ARGS[1]} mode=preserve"
-                "$LIBEXEC_DIR/deploy-xboard.sh" "${ARGS[1]}" "${ARGS[2]}" "${ARGS[3]}" "${ARGS[4]}" preserve
+                "$LIBEXEC_DIR/deploy-xboard.sh" "${ARGS[1]}" "${ARGS[2]}" "${ARGS[3]}" "${ARGS[4]}" "${ARGS[5]}" preserve
                 ;;
             reset:RESET_JPGREEN_XBOARD_DATA)
                 logger -t xboard-ci "operation=deploy-xboard sha=${ARGS[1]} mode=reset"
-                run_reset "${ARGS[1]}" "$LIBEXEC_DIR/deploy-xboard.sh" "${ARGS[1]}" "${ARGS[2]}" "${ARGS[3]}" "${ARGS[4]}" reset
+                run_reset "${ARGS[1]}" "$LIBEXEC_DIR/deploy-xboard.sh" "${ARGS[1]}" "${ARGS[2]}" "${ARGS[3]}" "${ARGS[4]}" "${ARGS[5]}" reset
                 ;;
             *) fail "reset mode or confirmation is invalid" ;;
         esac
@@ -73,10 +80,18 @@ case "${ARGS[0]}" in
     deploy-theme)
         [ "${#ARGS[@]}" -eq 4 ] || fail "deploy-theme arguments are invalid"
         validate_sha "${ARGS[1]}"
-        [[ "${ARGS[2]}" =~ ^ghcr\.io/voidintheshell/dk_theme@sha256:[0-9a-f]{64}$ ]] || fail "invalid theme image"
+        validate_image_tag dk_theme "${ARGS[2]}"
         validate_actor "${ARGS[3]}"
         logger -t xboard-ci "operation=deploy-theme sha=${ARGS[1]}"
         "$LIBEXEC_DIR/deploy-theme.sh" "${ARGS[1]}" "${ARGS[2]}" "${ARGS[3]}"
+        ;;
+    deploy-admin)
+        [ "${#ARGS[@]}" -eq 4 ] || fail "deploy-admin arguments are invalid"
+        validate_sha "${ARGS[1]}"
+        validate_image_tag xboard-admin "${ARGS[2]}"
+        validate_actor "${ARGS[3]}"
+        logger -t xboard-ci "operation=deploy-admin sha=${ARGS[1]}"
+        "$LIBEXEC_DIR/deploy-admin.sh" "${ARGS[1]}" "${ARGS[2]}" "${ARGS[3]}"
         ;;
     verify-production)
         [ "${#ARGS[@]}" -eq 1 ] || fail "verify-production accepts no arguments"

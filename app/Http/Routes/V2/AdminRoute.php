@@ -29,10 +29,7 @@ class AdminRoute
 {
     public function map(Registrar $router)
     {
-        $router->group([
-            'prefix' => admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))),
-            'middleware' => ['admin', 'log'],
-        ], function ($router) {
+        $routes = function (Registrar $router): void {
             // Config
             $router->group([
                 'prefix' => 'config'
@@ -339,7 +336,29 @@ class AdminRoute
                 $router->get('user/{userId}/history', [TrafficResetController::class, 'userHistory']);
                 $router->post('reset-user', [TrafficResetController::class, 'resetUser']);
             });
-        });
+        };
+
+        $staticAdminPath = admin_setting(
+            'secure_path',
+            admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))
+        );
+        $middleware = ['admin.path', 'admin', 'log'];
+
+        // Keep the startup-time route for route catalogues and existing tests.
+        // The path middleware still makes it invalid immediately after a change.
+        $router->group([
+            'prefix' => $staticAdminPath,
+            'middleware' => $middleware,
+        ], $routes);
+
+        // This group is intentionally dynamic: it lets a newly saved secure_path
+        // work on the next request without a PHP process restart. Passport has an
+        // eight-character reserved prefix and must remain owned by PassportRoute.
+        $router->group([
+            'prefix' => '{adminPath}',
+            'where' => ['adminPath' => '(?!passport(?:/|$))[A-Za-z0-9_-]{8,}'],
+            'middleware' => $middleware,
+        ], $routes);
 
     }
 }

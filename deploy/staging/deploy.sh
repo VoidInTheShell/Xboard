@@ -19,22 +19,6 @@ require_file() {
     [ -f "$1" ] || fail "required file is missing: $1"
 }
 
-set_env_value() {
-    local file="$1"
-    local key="$2"
-    local value="$3"
-    local temp_file
-    temp_file=$(mktemp "${file}.XXXXXX")
-    awk -v key="$key" -v value="$value" '
-        BEGIN { found = 0 }
-        index($0, key "=") == 1 { print key "=" value; found = 1; next }
-        { print }
-        END { if (!found) print key "=" value }
-    ' "$file" > "$temp_file"
-    install -m 600 "$temp_file" "$file"
-    rm -f "$temp_file"
-}
-
 wait_for_healthy() {
     local container="$1"
     local status
@@ -52,10 +36,10 @@ wait_for_healthy() {
     return 1
 }
 
-is_immutable_ghcr_image() {
+is_tagged_ghcr_image() {
     local image="$1"
     local repository="$2"
-    [[ "$image" =~ ^ghcr\.io/voidintheshell/${repository}@sha256:[0-9a-f]{64}$ ]]
+    [[ "$image" =~ ^ghcr\.io/voidintheshell/${repository}:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
 }
 
 [ -n "$BUNDLE_DIR" ] || fail "bundle directory argument is required"
@@ -75,6 +59,14 @@ require_file "$RESOLVED_BUNDLE/deploy.env"
 require_file "$RESOLVED_BUNDLE/admin_password"
 require_file "$RESOLVED_BUNDLE/server_token"
 require_file "$RESOLVED_BUNDLE/test_user_password"
+require_file "$RESOLVED_BUNDLE/admin_route_token"
+
+XBOARD_IMAGE=$(sed -n 's/^XBOARD_IMAGE=//p' "$RESOLVED_BUNDLE/deploy.env" | tail -1)
+DK_THEME_IMAGE=$(sed -n 's/^DK_THEME_IMAGE=//p' "$RESOLVED_BUNDLE/deploy.env" | tail -1)
+XBOARD_ADMIN_IMAGE=$(sed -n 's/^XBOARD_ADMIN_IMAGE=//p' "$RESOLVED_BUNDLE/deploy.env" | tail -1)
+is_tagged_ghcr_image "$XBOARD_IMAGE" xboard || fail "XBOARD_IMAGE must be an xboard GHCR image with a version tag"
+is_tagged_ghcr_image "$DK_THEME_IMAGE" dk_theme || fail "DK_THEME_IMAGE must be a DK Theme GHCR image with a version tag"
+is_tagged_ghcr_image "$XBOARD_ADMIN_IMAGE" xboard-admin || fail "XBOARD_ADMIN_IMAGE must be an xboard-admin GHCR image with a version tag"
 
 IFS= read -r REGISTRY_TOKEN || true
 [ -n "${REGISTRY_TOKEN:-}" ] || fail "registry token was not provided on stdin"
@@ -119,14 +111,8 @@ install -m 600 "$RESOLVED_BUNDLE/deploy.env" "$TARGET_DIR/.deploy.env"
 install -m 600 "$RESOLVED_BUNDLE/admin_password" "$TARGET_DIR/secrets/admin_password"
 install -m 600 "$RESOLVED_BUNDLE/server_token" "$TARGET_DIR/secrets/server_token"
 install -m 600 "$RESOLVED_BUNDLE/test_user_password" "$TARGET_DIR/secrets/test_user_password"
+install -m 600 "$RESOLVED_BUNDLE/admin_route_token" "$TARGET_DIR/secrets/admin_route_token"
 install -m 600 /dev/null "$TARGET_DIR/.env"
-
-XBOARD_IMAGE=$(sed -n 's/^XBOARD_IMAGE=//p' "$TARGET_DIR/.deploy.env" | tail -1)
-DK_THEME_IMAGE=$(sed -n 's/^DK_THEME_IMAGE=//p' "$TARGET_DIR/.deploy.env" | tail -1)
-[ -n "$XBOARD_IMAGE" ] || fail "XBOARD_IMAGE is missing from deploy.env"
-[ -n "$DK_THEME_IMAGE" ] || fail "DK_THEME_IMAGE is missing from deploy.env"
-is_immutable_ghcr_image "$XBOARD_IMAGE" xboard || fail "XBOARD_IMAGE must be an immutable xboard GHCR digest"
-is_immutable_ghcr_image "$DK_THEME_IMAGE" dk_theme || fail "DK_THEME_IMAGE must be an immutable DK Theme GHCR digest"
 
 AUTH_DIR=$(mktemp -d "/tmp/xboard-docker-auth.XXXXXX")
 ANON_DIR=$(mktemp -d "/tmp/xboard-docker-anon.XXXXXX")
@@ -139,14 +125,12 @@ trap cleanup EXIT
 printf '%s\n' "$REGISTRY_TOKEN" | sudo -n docker --config "$AUTH_DIR" login ghcr.io --username "$REGISTRY_USER" --password-stdin >/dev/null
 unset REGISTRY_TOKEN
 
-log "pulling immutable panel image"
+log "pulling panel image: $XBOARD_IMAGE"
 sudo -n docker --config "$AUTH_DIR" pull "$XBOARD_IMAGE"
-log "pulling immutable theme image"
+log "pulling theme image: $DK_THEME_IMAGE"
 sudo -n docker --config "$ANON_DIR" pull "$DK_THEME_IMAGE"
-
-THEME_DIGEST=$(sudo -n docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$DK_THEME_IMAGE" | grep '^ghcr.io/voidintheshell/dk_theme@sha256:' | head -1)
-[ -n "$THEME_DIGEST" ] || fail "could not resolve the theme image digest"
-set_env_value "$TARGET_DIR/.deploy.env" "DK_THEME_IMAGE" "$THEME_DIGEST"
+log "pulling standalone admin image: $XBOARD_ADMIN_IMAGE"
+sudo -n docker --config "$AUTH_DIR" pull "$XBOARD_ADMIN_IMAGE"
 
 compose() {
     sudo -n docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
@@ -167,12 +151,18 @@ sudo -n docker exec xboard-app test -S /data/redis.sock || fail "the embedded Re
 log "creating the deterministic staging node record"
 compose run --rm bootstrap php artisan xboard:staging-bootstrap --no-interaction
 
-log "restarting the panel to load the new settings, then starting the theme"
+log "restarting the panel to load the new settings, then starting the standalone admin"
 compose restart xboard
 if ! wait_for_healthy xboard-app; then
     compose ps || true
     compose logs --tail 160 xboard || true
     fail "the staging panel did not become healthy after bootstrap"
+fi
+compose up -d admin
+if ! wait_for_healthy xboard-admin; then
+    compose ps || true
+    compose logs --tail 160 admin || true
+    fail "the standalone admin did not become healthy"
 fi
 compose up -d theme
 
@@ -183,7 +173,9 @@ if ! wait_for_healthy xboard-theme; then
 fi
 
 sudo -n docker exec xboard-app wget -q -O /dev/null http://127.0.0.1:7001/
+sudo -n docker exec xboard-admin wget -q -O /dev/null http://127.0.0.1/healthz
 sudo -n docker exec xboard-theme wget -q -O /dev/null http://127.0.0.1/healthz
+sudo -n docker exec xboard-theme test -s /var/run/xboard-admin-route/active.conf
 sudo -n docker image prune -f >/dev/null
 
 log "deployment complete"

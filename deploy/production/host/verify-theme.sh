@@ -17,15 +17,19 @@ public_curl() {
 }
 
 [ "$(id -u)" = "0" ] || fail "verification must run as root"
-docker inspect xboard-theme "$BUNKERWEB" >/dev/null
+docker inspect xboard-theme xboard-admin "$BUNKERWEB" >/dev/null
 docker exec xboard-theme wget -q -O /dev/null http://127.0.0.1/healthz
+docker exec xboard-admin wget -q -O /dev/null http://127.0.0.1/healthz
 docker exec "$BUNKERWEB" nginx -t >/dev/null
-! docker ps -a --format '{{.Names}}' | grep -qx xboard-admin || fail "standalone admin must not run in production"
+docker exec xboard-theme test -s /var/run/xboard-admin-route/active.conf
+active_path=$(docker exec xboard-theme cat /var/run/xboard-admin-route/active-path)
+[[ "$active_path" =~ ^[A-Za-z0-9_-]{8,}$ && "$active_path" != "passport" ]] || fail "active administrator path is invalid"
 
 logo_file=$(mktemp)
 admin_page=$(mktemp)
+original_admin_page=$(mktemp)
 cleanup() {
-    rm -f -- "$logo_file" "$admin_page"
+    rm -f -- "$logo_file" "$admin_page" "$original_admin_page"
 }
 trap cleanup EXIT
 
@@ -36,8 +40,13 @@ case "$logo_type" in
     image/png*) ;;
     *) fail "the public theme logo has an unexpected content type" ;;
 esac
-public_curl "$PANEL_URL/unitedearthgov" > "$admin_page"
-grep -Eq '<title>(XBoard|UEG-Net)</title>' "$admin_page" || fail "the built-in administrator title is missing"
-grep -Fq '/assets/admin/' "$admin_page" || fail "the built-in administrator assets are missing"
+public_curl "$PANEL_URL/${active_path}/" > "$admin_page"
+grep -Fq '<title>XBoard Admin</title>' "$admin_page" || fail "the standalone administrator title is missing"
+grep -Fq 'data-xboard-admin-shell="standalone"' "$admin_page" || fail "the standalone administrator marker is missing"
+grep -Fq './assets/' "$admin_page" || fail "the standalone administrator relative assets are missing"
+public_curl "$PANEL_URL/${active_path}/original" > "$original_admin_page"
+grep -Fq '<title>XBoard</title>' "$original_admin_page" || fail "the built-in administrator title is missing"
+grep -Fq '/assets/admin/' "$original_admin_page" || fail "the built-in administrator assets are missing"
+! grep -Fq 'data-xboard-admin-shell="standalone"' "$original_admin_page" || fail "the fallback unexpectedly served the standalone administrator"
 
-printf 'container=xboard-theme health=ok bunkerweb=ok public_theme=ok admin=ok isolation=ok\n'
+printf 'containers=xboard-app,xboard-theme,xboard-admin health=ok bunkerweb=ok public_theme=ok standalone_admin=ok original_fallback=ok\n'

@@ -8,7 +8,19 @@ on:
   workflow_dispatch:
     inputs:
       dk_theme_image:
-        description: Immutable DK Theme GHCR image reference for this full-stack rebuild. Defaults to the staging Environment variable.
+        description: DK Theme GHCR image with version tag for this full-stack rebuild. Defaults to the staging Environment variable.
+        required: false
+        type: string
+      xboard_admin_image:
+        description: Xboard-Admin GHCR image with version tag for this full-stack rebuild. Defaults to the staging Environment variable.
+        required: false
+        type: string
+      production_dk_theme_image:
+        description: DK Theme GHCR image with version tag for a manual JPGREEN production deployment. Defaults to the production Environment variable.
+        required: false
+        type: string
+      production_xboard_admin_image:
+        description: Xboard-Admin GHCR image with version tag for a manual JPGREEN production deployment. Defaults to the production Environment variable.
         required: false
         type: string
       reset_jpgreen_data:
@@ -151,7 +163,7 @@ jobs:
       contents: read
       packages: write
     outputs:
-      digest: ${{ steps.push.outputs.digest }}
+      image_tag: build-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -179,6 +191,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
+            type=raw,value=build-${{ github.run_id }}-${{ github.run_attempt }}
             type=sha,format=long,prefix=sha-
             type=ref,event=branch
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
@@ -200,6 +213,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: true
+
+      - name: Report staging image tag
+        env:
+          IMAGE_TAG: build-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          image="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+          echo "Published staging image: ${image}"
+          printf 'Staging image: `%s`\n' "${image}" >> "$GITHUB_STEP_SUMMARY"
 
   deploy-staging:
     name: Rebuild GJHK staging
@@ -239,8 +260,10 @@ jobs:
       SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
       SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      XBOARD_IMAGE: ghcr.io/voidintheshell/xboard@${{ needs.build-and-push.outputs.digest }}
+      XBOARD_IMAGE: ghcr.io/voidintheshell/xboard:${{ needs.build-and-push.outputs.image_tag }}
       DK_THEME_IMAGE: ${{ inputs.dk_theme_image || vars.STAGING_DK_THEME_IMAGE }}
+      XBOARD_ADMIN_IMAGE: ${{ inputs.xboard_admin_image || vars.STAGING_XBOARD_ADMIN_IMAGE }}
+      ADMIN_ROUTE_TOKEN: ${{ secrets.STAGING_ADMIN_ROUTE_TOKEN }}
       REMOTE_BUNDLE: /home/beihai/docker/.incoming/xboard-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout deployment files
@@ -266,10 +289,16 @@ jobs:
           : "${TEST_USER_PASSWORD:?STAGING_TEST_USER_PASSWORD is required}"
           : "${SERVER_TOKEN:?STAGING_SERVER_TOKEN is required}"
           : "${DK_THEME_IMAGE:?STAGING_DK_THEME_IMAGE or workflow_dispatch dk_theme_image is required}"
+          : "${XBOARD_ADMIN_IMAGE:?STAGING_XBOARD_ADMIN_IMAGE or workflow_dispatch xboard_admin_image is required}"
+          : "${ADMIN_ROUTE_TOKEN:?STAGING_ADMIN_ROUTE_TOKEN is required}"
           : "${SSH_PRIVATE_KEY:?STAGING_SSH_PRIVATE_KEY is required}"
           : "${SSH_KNOWN_HOSTS:?STAGING_SSH_KNOWN_HOSTS is required}"
-          if [ "${ADMIN_PATH}" != 'unitedearthgov' ]; then
-            echo "STAGING_ADMIN_PATH must be unitedearthgov for this project" >&2
+          if ! [[ "${ADMIN_PATH}" =~ ^[A-Za-z0-9_-]{8,}$ ]] || [ "${ADMIN_PATH}" = 'passport' ]; then
+            echo "STAGING_ADMIN_PATH must be a non-reserved secure path" >&2
+            exit 1
+          fi
+          if ! [[ "${ADMIN_ROUTE_TOKEN}" =~ ^[A-Za-z0-9_-]{16,}$ ]]; then
+            echo "STAGING_ADMIN_ROUTE_TOKEN must use at least 16 base64url-safe characters" >&2
             exit 1
           fi
           if [ "${#SERVER_TOKEN}" -lt 16 ]; then
@@ -280,17 +309,21 @@ jobs:
             echo "STAGING_TEST_USER_PASSWORD must contain at least 8 characters" >&2
             exit 1
           fi
-          is_immutable_ghcr_image() {
+          is_tagged_ghcr_image() {
             local image="$1"
             local repository="$2"
-            [[ "${image}" =~ ^ghcr\.io/voidintheshell/${repository}@sha256:[0-9a-f]{64}$ ]]
+            [[ "${image}" =~ ^ghcr\.io/voidintheshell/${repository}:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
           }
-          is_immutable_ghcr_image "${XBOARD_IMAGE}" xboard || {
-            echo "XBOARD_IMAGE must be an immutable xboard GHCR digest" >&2
+          is_tagged_ghcr_image "${XBOARD_IMAGE}" xboard || {
+            echo "XBOARD_IMAGE must be an xboard GHCR image with a version tag" >&2
             exit 1
           }
-          is_immutable_ghcr_image "${DK_THEME_IMAGE}" dk_theme || {
-            echo "DK_THEME_IMAGE must be an immutable DK Theme GHCR digest" >&2
+          is_tagged_ghcr_image "${DK_THEME_IMAGE}" dk_theme || {
+            echo "DK_THEME_IMAGE must be a DK Theme GHCR image with a version tag" >&2
+            exit 1
+          }
+          is_tagged_ghcr_image "${XBOARD_ADMIN_IMAGE}" xboard-admin || {
+            echo "XBOARD_ADMIN_IMAGE must be an Xboard-Admin GHCR image with a version tag" >&2
             exit 1
           }
 
@@ -311,10 +344,12 @@ jobs:
           printf '%s' "${ADMIN_PASSWORD}" > "${BUNDLE_DIR}/admin_password"
           printf '%s' "${SERVER_TOKEN}" > "${BUNDLE_DIR}/server_token"
           printf '%s' "${TEST_USER_PASSWORD}" > "${BUNDLE_DIR}/test_user_password"
-          chmod 600 "${BUNDLE_DIR}/admin_password" "${BUNDLE_DIR}/server_token" "${BUNDLE_DIR}/test_user_password"
+          printf '%s' "${ADMIN_ROUTE_TOKEN}" > "${BUNDLE_DIR}/admin_route_token"
+          chmod 600 "${BUNDLE_DIR}/admin_password" "${BUNDLE_DIR}/server_token" "${BUNDLE_DIR}/test_user_password" "${BUNDLE_DIR}/admin_route_token"
           {
             printf 'XBOARD_IMAGE=%s\n' "${XBOARD_IMAGE}"
             printf 'DK_THEME_IMAGE=%s\n' "${DK_THEME_IMAGE}"
+            printf 'XBOARD_ADMIN_IMAGE=%s\n' "${XBOARD_ADMIN_IMAGE}"
             printf 'STAGING_ADMIN_ACCOUNT=%s\n' "${ADMIN_ACCOUNT}"
             printf 'STAGING_TEST_USER_EMAIL=%s\n' "${TEST_USER_EMAIL}"
             printf 'STAGING_PANEL_URL=%s\n' "${PANEL_URL}"
@@ -341,7 +376,7 @@ jobs:
           scp "${SCP_ARGS[@]}" "${RUNNER_TEMP}/xboard-bundle/"* "${SSH_TARGET}:${REMOTE_BUNDLE}/"
           printf '%s\n' "${GHCR_TOKEN}" | ssh "${SSH_ARGS[@]}" "${SSH_TARGET}" "chmod 700 '${REMOTE_BUNDLE}/deploy.sh' && '${REMOTE_BUNDLE}/deploy.sh' '${REMOTE_BUNDLE}' '${GITHUB_ACTOR}'"
 
-      - name: Verify public staging entrypoint
+      - name: Verify public standalone admin, secure-path switch, legacy fallback, and restoration
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -351,18 +386,74 @@ jobs:
           admin_page=$(mktemp)
           login_request=$(mktemp)
           login_response=$(mktemp)
-          trap 'rm -f -- "${admin_page}" "${login_request}" "${login_response}"' EXIT
+          config_request=$(mktemp)
+          config_response=$(mktemp)
+          new_admin_page=$(mktemp)
+          original_admin_page=$(mktemp)
+          restored_admin_page=$(mktemp)
+          NEXT_ADMIN_PATH="xboard-admin-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          path_changed=0
+          auth_data=""
+          restore_admin_path() {
+            [ "${path_changed}" = "1" ] || return 0
+            jq -n --arg path "${ADMIN_PATH}" '{secure_path: $path}' > "${config_request}" || return 1
+            curl --fail --silent --show-error \
+              --header "Authorization: ${auth_data}" \
+              --header 'Content-Type: application/json' \
+              --data-binary "@${config_request}" \
+              "${PANEL_URL}/api/v2/${NEXT_ADMIN_PATH}/config/save" > "${config_response}" || return 1
+            jq -e '.data == true' "${config_response}" > /dev/null || return 1
+            path_changed=0
+          }
+          restore_on_exit() {
+            status=$?
+            if [ "${path_changed}" = "1" ] && [ -n "${auth_data}" ]; then
+              if ! restore_admin_path; then
+                echo "ERROR: could not restore the staging administrator path" >&2
+              fi
+            fi
+            rm -f -- "${admin_page}" "${login_request}" "${login_response}" "${config_request}" "${config_response}" "${new_admin_page}" "${original_admin_page}" "${restored_admin_page}"
+            exit "${status}"
+          }
+          trap restore_on_exit EXIT
           curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 \
-            "${PANEL_URL}/${ADMIN_PATH}" > "${admin_page}"
-          grep --fixed-strings '<title>XBoard</title>' "${admin_page}" > /dev/null
-          grep --fixed-strings '/assets/admin/' "${admin_page}" > /dev/null
-          jq -n --arg email "${TEST_USER_EMAIL}" --arg password "${TEST_USER_PASSWORD}" \
+            "${PANEL_URL}/${ADMIN_PATH}/" > "${admin_page}"
+          grep --fixed-strings '<title>XBoard Admin</title>' "${admin_page}" > /dev/null
+          grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${admin_page}" > /dev/null
+          grep --fixed-strings './assets/' "${admin_page}" > /dev/null
+          jq -n --arg email "${ADMIN_ACCOUNT}" --arg password "${ADMIN_PASSWORD}" \
             '{email: $email, password: $password}' > "${login_request}"
           login_status=$(curl --silent --show-error --output "${login_response}" --write-out '%{http_code}' \
             --header 'Content-Type: application/json' --data-binary "@${login_request}" \
             "${PANEL_URL}/api/v1/passport/auth/login")
           test "${login_status}" = "200"
-          jq -e '.data.auth_data | type == "string" and startswith("Bearer ")' "${login_response}" > /dev/null
+          auth_data=$(jq -er '.data.auth_data | select(type == "string" and startswith("Bearer "))' "${login_response}")
+          jq -n --arg path "${NEXT_ADMIN_PATH}" '{secure_path: $path}' > "${config_request}"
+          curl --fail --silent --show-error \
+            --header "Authorization: ${auth_data}" \
+            --header 'Content-Type: application/json' \
+            --data-binary "@${config_request}" \
+            "${PANEL_URL}/api/v2/${ADMIN_PATH}/config/save" > "${config_response}"
+          jq -e '.data == true' "${config_response}" > /dev/null
+          path_changed=1
+          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 2 \
+            "${PANEL_URL}/${NEXT_ADMIN_PATH}/" > "${new_admin_page}"
+          grep --fixed-strings '<title>XBoard Admin</title>' "${new_admin_page}" > /dev/null
+          grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${new_admin_page}" > /dev/null
+          curl --fail --silent --show-error \
+            --header "Authorization: ${auth_data}" \
+            "${PANEL_URL}/api/v2/${NEXT_ADMIN_PATH}/config/fetch?key=safe" > "${config_response}"
+          jq -e --arg path "${NEXT_ADMIN_PATH}" '.data.safe.secure_path == $path' "${config_response}" > /dev/null
+          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 2 \
+            "${PANEL_URL}/${NEXT_ADMIN_PATH}/original" > "${original_admin_page}"
+          grep --fixed-strings '<title>XBoard</title>' "${original_admin_page}" > /dev/null
+          grep --fixed-strings '/assets/admin/' "${original_admin_page}" > /dev/null
+          ! grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${original_admin_page}" > /dev/null
+          restore_admin_path
+          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 2 \
+            "${PANEL_URL}/${ADMIN_PATH}/" > "${restored_admin_page}"
+          grep --fixed-strings '<title>XBoard Admin</title>' "${restored_admin_page}" > /dev/null
+          grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${restored_admin_page}" > /dev/null
 
       - name: Remove sensitive deployment bundle
         if: always()
@@ -380,7 +471,7 @@ jobs:
     name: Deploy JPGREEN production
     if: >-
       github.ref == 'refs/heads/master' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      github.event_name == 'workflow_dispatch'
     needs: build-and-push
     runs-on: ubuntu-latest
     concurrency:
@@ -401,8 +492,9 @@ jobs:
       DEPLOY_SSH_KEY: ${{ secrets.PRODUCTION_DEPLOY_SSH_KEY }}
       SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      XBOARD_IMAGE: ghcr.io/voidintheshell/xboard@${{ needs.build-and-push.outputs.digest }}
-      DK_THEME_IMAGE: ${{ vars.PRODUCTION_DK_THEME_IMAGE }}
+      XBOARD_IMAGE: ghcr.io/voidintheshell/xboard:${{ needs.build-and-push.outputs.image_tag }}
+      DK_THEME_IMAGE: ${{ inputs.production_dk_theme_image || vars.PRODUCTION_DK_THEME_IMAGE }}
+      XBOARD_ADMIN_IMAGE: ${{ inputs.production_xboard_admin_image || vars.PRODUCTION_XBOARD_ADMIN_IMAGE }}
       RESET_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.reset_jpgreen_data && 'reset' || 'preserve' }}
       RESET_CONFIRMATION: ${{ inputs.reset_confirmation || '' }}
     steps:
@@ -418,11 +510,13 @@ jobs:
           : "${DEPLOY_SSH_KEY:?PRODUCTION_DEPLOY_SSH_KEY is required}"
           : "${SSH_KNOWN_HOSTS:?PRODUCTION_SSH_KNOWN_HOSTS is required}"
           : "${DK_THEME_IMAGE:?PRODUCTION_DK_THEME_IMAGE is required}"
+          : "${XBOARD_ADMIN_IMAGE:?PRODUCTION_XBOARD_ADMIN_IMAGE is required}"
           test "${PANEL_URL}" = 'https://panel.uegov.org'
           test "${ADMIN_PATH}" = 'unitedearthgov'
           test "${SSH_USER}" = 'xboard-ci'
-          [[ "${XBOARD_IMAGE}" =~ ^ghcr\.io/voidintheshell/xboard@sha256:[0-9a-f]{64}$ ]]
-          [[ "${DK_THEME_IMAGE}" =~ ^ghcr\.io/voidintheshell/dk_theme@sha256:[0-9a-f]{64}$ ]]
+          [[ "${XBOARD_IMAGE}" =~ ^ghcr\.io/voidintheshell/xboard:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
+          [[ "${DK_THEME_IMAGE}" =~ ^ghcr\.io/voidintheshell/dk_theme:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
+          [[ "${XBOARD_ADMIN_IMAGE}" =~ ^ghcr\.io/voidintheshell/xboard-admin:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
           if [ "${RESET_MODE}" = 'reset' ]; then
             test "${RESET_CONFIRMATION}" = 'RESET JPGREEN XBOARD DATA'
           else
@@ -453,7 +547,7 @@ jobs:
             reset_marker='NO_RESET'
           fi
           printf '%s\n' "${GHCR_TOKEN}" | ssh "${SSH_ARGS[@]}" "${SSH_TARGET}" \
-            "deploy-xboard ${GITHUB_SHA} ${XBOARD_IMAGE} ${DK_THEME_IMAGE} ${GITHUB_ACTOR} ${RESET_MODE} ${reset_marker}"
+            "deploy-xboard ${GITHUB_SHA} ${XBOARD_IMAGE} ${DK_THEME_IMAGE} ${XBOARD_ADMIN_IMAGE} ${GITHUB_ACTOR} ${RESET_MODE} ${reset_marker}"
 
       - name: Verify public entrypoints and protected runtime from JPGREEN
         shell: bash

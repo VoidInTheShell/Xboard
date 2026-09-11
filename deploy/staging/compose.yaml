@@ -19,12 +19,15 @@ services:
       - "7001"
     volumes: *xboard-volumes
     environment:
+      ADMIN_ROUTE_TOKEN_FILE: /run/secrets/admin_route_token
       RESOURCE_PROFILE: minimal
       ENABLE_WEB: "true"
       ENABLE_HORIZON: "true"
       ENABLE_WS_SERVER: "true"
       ENABLE_CADDY: "true"
       docker: "true"
+    secrets:
+      - admin_route_token
     networks:
       - xboard-internal
     mem_limit: 448m
@@ -80,6 +83,40 @@ services:
     depends_on:
       xboard:
         condition: service_healthy
+      admin:
+        condition: service_healthy
+    expose:
+      - "80"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    environment:
+      ADMIN_ROUTE_TOKEN_FILE: /run/secrets/admin_route_token
+    secrets:
+      - admin_route_token
+    networks:
+      - xboard-internal
+      - appnet
+    mem_limit: 32m
+    mem_reservation: 8m
+    cpus: 0.25
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  admin:
+    image: ${XBOARD_ADMIN_IMAGE:?XBOARD_ADMIN_IMAGE is required}
+    container_name: xboard-admin
+    restart: unless-stopped
+    init: true
     expose:
       - "80"
     read_only: true
@@ -89,9 +126,8 @@ services:
       - /tmp
     networks:
       - xboard-internal
-      - appnet
-    mem_limit: 32m
-    mem_reservation: 8m
+    mem_limit: 48m
+    mem_reservation: 12m
     cpus: 0.25
     pids_limit: 64
     security_opt:
@@ -119,3 +155,5 @@ secrets:
     file: ./secrets/server_token
   test_user_password:
     file: ./secrets/test_user_password
+  admin_route_token:
+    file: ./secrets/admin_route_token

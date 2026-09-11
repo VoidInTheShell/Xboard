@@ -208,8 +208,8 @@ class XboardStagingBootstrap extends Command
     private function adminPathEnv(string $name): string
     {
         $path = $this->requiredEnv($name);
-        if (!hash_equals(self::STAGING_ADMIN_PATH, $path)) {
-            throw new RuntimeException("{$name} must be " . self::STAGING_ADMIN_PATH . ' for this project.');
+        if (!preg_match('/^[A-Za-z0-9_-]{8,}$/', $path) || $path === 'passport') {
+            throw new RuntimeException("{$name} must be at least 8 letters, numbers, underscores, or hyphens and not a reserved path.");
         }
 
         return $path;

@@ -67,4 +67,4 @@ node_status=$(local_curl --output "$node_response" --write-out '%{http_code}' \
 jq -e '.message == "Machine not found or disabled"' "$node_response" >/dev/null \
     || fail "machine API probe was intercepted before the JSON application boundary"
 
-printf 'containers=xboard-app,xboard-theme login=ok bunkerweb_mcp=active node_control=reachable public_entrypoints=ok\n'
+printf 'containers=xboard-app,xboard-theme,xboard-admin login=ok bunkerweb_mcp=active node_control=reachable public_entrypoints=ok\n'

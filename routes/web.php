@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\StandaloneAdminRouteController;
 use App\Services\ThemeService;
 use App\Services\UpdateService;
 use Illuminate\Http\Request;
@@ -73,7 +74,17 @@ Route::get('/', function (Request $request) {
     }
 });
 
-//TODO:: 兼容
+// These two endpoints are never exposed by Theme's public proxy. They are
+// authenticated by a Docker secret so Theme can keep the standalone Admin
+// route in sync and render the legacy panel only as an explicit fallback.
+Route::prefix('_internal/standalone-admin')
+    ->middleware('standalone.admin.router')
+    ->group(function () {
+        Route::get('/entry', [StandaloneAdminRouteController::class, 'entry']);
+        Route::get('/original', [StandaloneAdminRouteController::class, 'original']);
+    });
+
+// TODO: original in-app administration panel compatibility fallback.
 Route::get('/' . admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))), function () {
     return view('admin', [
         'title' => admin_setting('app_name', 'XBoard'),

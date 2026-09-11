@@ -104,13 +104,14 @@ cleanup() {
     unset REGISTRY_TOKEN
 }
 trap cleanup EXIT
-printf '%s\n' "$REGISTRY_TOKEN" | docker --config "$AUTH_DIR" login ghcr.io --username "$REGISTRY_USER" --password-stdin >/dev/null
+printf '%s\n' "$REGISTRY_TOKEN" | docker --config "$AUTH_DIR" login ghcr.io --username "$REGISTRY_USER" --password-stdin >/dev/null 2>&1 \
+    || fail "registry authentication failed"
 unset REGISTRY_TOKEN
 
 log "pulling version-tagged application, Theme and standalone Admin images"
-docker --config "$AUTH_DIR" pull "$XBOARD_IMAGE"
-docker --config "$AUTH_DIR" pull "$REQUESTED_THEME_IMAGE"
-docker --config "$AUTH_DIR" pull "$REQUESTED_ADMIN_IMAGE"
+docker --config "$AUTH_DIR" pull "$XBOARD_IMAGE" >/dev/null 2>&1 || fail "could not pull the Xboard version tag"
+docker --config "$AUTH_DIR" pull "$REQUESTED_THEME_IMAGE" >/dev/null 2>&1 || fail "could not pull the Theme version tag"
+docker --config "$AUTH_DIR" pull "$REQUESTED_ADMIN_IMAGE" >/dev/null 2>&1 || fail "could not pull the standalone Admin version tag"
 
 install -o root -g root -d -m 750 "$TARGET_DIR" "$TARGET_DIR/backups"
 exec 9>"$TARGET_DIR/.deploy.lock"

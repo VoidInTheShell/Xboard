@@ -127,15 +127,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-printf '%s\n' "$REGISTRY_TOKEN" | sudo -n docker --config "$AUTH_DIR" login ghcr.io --username "$REGISTRY_USER" --password-stdin >/dev/null
+printf '%s\n' "$REGISTRY_TOKEN" | sudo -n docker --config "$AUTH_DIR" login ghcr.io --username "$REGISTRY_USER" --password-stdin >/dev/null 2>&1 \
+    || fail "registry authentication failed"
 unset REGISTRY_TOKEN
 
 log "pulling panel image: $XBOARD_IMAGE"
-sudo -n docker --config "$AUTH_DIR" pull "$XBOARD_IMAGE"
+sudo -n docker --config "$AUTH_DIR" pull "$XBOARD_IMAGE" >/dev/null 2>&1 || fail "could not pull the Xboard version tag"
 log "pulling theme image: $DK_THEME_IMAGE"
-sudo -n docker --config "$ANON_DIR" pull "$DK_THEME_IMAGE"
+sudo -n docker --config "$ANON_DIR" pull "$DK_THEME_IMAGE" >/dev/null 2>&1 || fail "could not pull the Theme version tag"
 log "pulling standalone admin image: $XBOARD_ADMIN_IMAGE"
-sudo -n docker --config "$AUTH_DIR" pull "$XBOARD_ADMIN_IMAGE"
+sudo -n docker --config "$AUTH_DIR" pull "$XBOARD_ADMIN_IMAGE" >/dev/null 2>&1 || fail "could not pull the standalone Admin version tag"
 
 compose() {
     sudo -n docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"

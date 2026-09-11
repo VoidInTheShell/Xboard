@@ -15,6 +15,10 @@ fail() {
 }
 
 [ -f "$CONFIG_FILE" ] || fail "configuration file is missing"
+# A Windows checkout can retain CRLF while this file is uploaded to the Linux
+# host. Normalize only this trusted generated configuration before both the
+# marker checks and BunkerWeb database update.
+sed -i 's/\r$//' "$CONFIG_FILE"
 grep -q '^# XBOARD-MCP-COMPAT$' "$CONFIG_FILE" || fail "configuration marker is missing"
 grep -q '^# XBOARD-NODE-CONTROL-COMPAT$' "$CONFIG_FILE" || fail "node control compatibility marker is missing"
 [ "$(grep -Fc 'proxy_intercept_errors off;' "$CONFIG_FILE")" = "3" ] \
@@ -74,7 +78,7 @@ fi
 for _ in $(seq 1 45); do
     if docker exec "$BUNKERWEB" sh -lc 'nginx -T 2>/dev/null | grep -q "^# XBOARD-MCP-COMPAT$" && nginx -T 2>/dev/null | grep -q "^# XBOARD-NODE-CONTROL-COMPAT$"'; then
         docker exec "$BUNKERWEB" nginx -t >/dev/null
-        printf '[bunkerweb-mcp] active checksum=%s\n' "$checksum"
+        printf '[bunkerweb-mcp] active configuration=ok\n'
         exit 0
     fi
     sleep 2
@@ -85,7 +89,7 @@ docker restart "$SCHEDULER" >/dev/null
 for _ in $(seq 1 60); do
     if docker exec "$BUNKERWEB" sh -lc 'nginx -T 2>/dev/null | grep -q "^# XBOARD-MCP-COMPAT$" && nginx -T 2>/dev/null | grep -q "^# XBOARD-NODE-CONTROL-COMPAT$"'; then
         docker exec "$BUNKERWEB" nginx -t >/dev/null
-        printf '[bunkerweb-mcp] active checksum=%s\n' "$checksum"
+        printf '[bunkerweb-mcp] active configuration=ok\n'
         exit 0
     fi
     sleep 2

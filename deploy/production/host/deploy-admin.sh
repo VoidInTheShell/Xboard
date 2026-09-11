@@ -70,9 +70,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-printf '%s\n' "$REGISTRY_TOKEN" | docker --config "$AUTH_DIR" login ghcr.io --username "$REGISTRY_USER" --password-stdin >/dev/null
+printf '%s\n' "$REGISTRY_TOKEN" | docker --config "$AUTH_DIR" login ghcr.io --username "$REGISTRY_USER" --password-stdin >/dev/null 2>&1 \
+    || fail "registry authentication failed"
 unset REGISTRY_TOKEN
-docker --config "$AUTH_DIR" pull "$ADMIN_IMAGE"
+docker --config "$AUTH_DIR" pull "$ADMIN_IMAGE" >/dev/null 2>&1 || fail "could not pull the standalone Admin version tag"
 
 set_env_value "$TARGET_DIR/.deploy.env" "XBOARD_ADMIN_IMAGE" "$ADMIN_IMAGE"
 compose() {

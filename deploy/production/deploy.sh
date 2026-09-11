@@ -87,7 +87,7 @@ CURRENT_XBOARD_SHA=$(branch_sha "$XBOARD_REPOSITORY" master)
 [ "$GIT_SHA" = "$CURRENT_XBOARD_SHA" ] || fail "release SHA is not the current Xboard master"
 
 [ "$(realpath -m "$TARGET_DIR")" = "$EXPECTED_TARGET" ] || fail "unexpected production target"
-for file in compose.yaml production-bootstrap.php xboard-mcp.conf apply-mcp-compat.sh; do
+for file in compose.yaml production-bootstrap.php sqlite-data-guard.php xboard-mcp.conf apply-mcp-compat.sh; do
     require_file "$ASSET_DIR/$file"
 done
 for secret in admin_password server_token test_user_password admin_route_token; do
@@ -131,6 +131,7 @@ install -o root -g root -m 700 "$0" "$TARGET_DIR/deploy.sh"
 install -o root -g root -m 700 "$ASSET_DIR/apply-mcp-compat.sh" "$TARGET_DIR/bunkerweb/apply-mcp-compat.sh"
 install -o root -g root -m 644 "$ASSET_DIR/xboard-mcp.conf" "$TARGET_DIR/bunkerweb/xboard-mcp.conf"
 install -o root -g root -m 644 "$ASSET_DIR/production-bootstrap.php" "$TARGET_DIR/bootstrap/production-bootstrap.php"
+install -o root -g root -m 644 "$ASSET_DIR/sqlite-data-guard.php" "$TARGET_DIR/bootstrap/sqlite-data-guard.php"
 for secret in admin_password server_token test_user_password; do
     install -o root -g root -m 600 "$CONTROL_DIR/secrets/$secret" "$TARGET_DIR/secrets/$secret"
 done
@@ -156,6 +157,19 @@ chmod 600 "$TARGET_DIR/.deploy.env"
 
 compose() {
     docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
+}
+
+restore_previous_runtime_files() {
+    for item in compose.yaml .deploy.env deploy.sh; do
+        [ ! -f "$release_backup/$item" ] || cp -a "$release_backup/$item" "$TARGET_DIR/$item"
+    done
+}
+
+rollback_preserve_deployment() {
+    local database_backup="$1"
+    compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php restore "$database_backup" /www/.docker/.data/database.sqlite || true
+    restore_previous_runtime_files
+    compose up -d xboard || true
 }
 
 if [ "$RESET_MODE" = "reset" ]; then
@@ -186,10 +200,20 @@ else
     require_file "$TARGET_DIR/data/database.sqlite"
     log "preserving production data and applying forward migrations"
     compose stop xboard || true
-    database_backup="$release_backup/database.sqlite"
-    cp -a "$TARGET_DIR/data/database.sqlite" "$database_backup"
-    chmod 600 "$database_backup"
-    compose run --rm --no-deps bootstrap php artisan migrate --force
+    database_backup="/backups/release-${timestamp}/database.sqlite"
+    if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php snapshot /www/.docker/.data/database.sqlite "$database_backup"; then
+        restore_previous_runtime_files
+        compose up -d xboard || true
+        fail "could not create a consistent production database snapshot"
+    fi
+    if ! compose run --rm --no-deps bootstrap php artisan migrate --force; then
+        rollback_preserve_deployment "$database_backup"
+        fail "production migration failed; the pre-deploy database and runtime files were restored"
+    fi
+    if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php assert-not-decreased "$database_backup" /www/.docker/.data/database.sqlite; then
+        rollback_preserve_deployment "$database_backup"
+        fail "protected production business records decreased; the pre-deploy database and runtime files were restored"
+    fi
     compose up -d xboard
 fi
 

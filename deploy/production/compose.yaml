@@ -58,6 +58,7 @@ services:
       - ./plugins:/www/plugins
       - ./redis:/data
       - ./bootstrap:/bootstrap:ro
+      - ./backups:/backups
       - ./runtime-secrets:/runtime-secrets
     environment:
       APP_ENV: production

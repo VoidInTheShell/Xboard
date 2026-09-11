@@ -8,6 +8,8 @@ x-xboard-volumes: &xboard-volumes
   - ./themes:/www/storage/theme
   - ./plugins:/www/plugins
   - redis-data:/data
+  - ./bootstrap:/bootstrap:ro
+  - ./backups:/backups
 
 services:
   xboard:

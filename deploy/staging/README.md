@@ -1,6 +1,6 @@
 # Xboard staging deployment
 
-This directory defines the disposable Xboard test stack on GJHK. Pushes to `dev` deploy automatically. Any other branch can deploy only through `workflow_dispatch` selected on that branch. Every deployment uses prebuilt GHCR images; the server never compiles source code. After a feature-branch acceptance run, dispatch `dev` again so the shared environment returns to its development baseline.
+This directory defines the shared Xboard test stack on GJHK. Pushes to `dev` deploy automatically. Any other branch can deploy only through `workflow_dispatch` selected on that branch. Every deployment uses prebuilt GHCR images; the server never compiles source code. After a feature-branch acceptance run, dispatch `dev` again so the shared environment returns to its development baseline.
 
 Every branch push and pull request builds a CI-only image with Composer development dependencies and runs the PHP test suite. Published runtime images keep development dependencies excluded. A full stack rebuild consumes GHCR version tags for the backend, Theme, and standalone Admin. Each publish run adds a `build-<run_id>-<run_attempt>` tag, and the staging job uses that tag directly without looking up or rewriting image digests. Deployments verify the default standalone Admin, an actual secure-path change, the explicit built-in-panel fallback, and restoration of the default standalone entry without printing authentication tokens.
 
@@ -12,10 +12,10 @@ Every branch push and pull request builds a CI-only image with Composer developm
 - Backend/API and built-in administrator fallback frontend container: `xboard-app`, reachable only on the internal Docker network
 - User frontend and public gateway container: `xboard-theme`, joined to both the internal network and `appnet`
 - Standalone administrator frontend container: `xboard-admin`, reachable only on the internal Docker network
-- Database: disposable SQLite under `data/`
+- Database: persistent SQLite under `data/`, initialized only when missing
 - Cache/queue: the image's embedded Redis with a named Compose volume
 
-Every successful staging deployment stops the old Compose project, removes only this service's containers, named volume and explicit runtime subdirectories, then performs a fresh install. The shared staging host is not branch-isolated, so the latest successful deployment becomes the current test version. No production host or production database is part of this workflow.
+The first deployment installs SQLite and the deterministic staging baseline. Later deployments preserve `data/`, `.env`, Redis and uploaded runtime state, create a consistent SQLite snapshot under `backups/`, apply forward migrations, and reject any release that reduces protected business-row counts. The shared staging host is not branch-isolated, so the latest successful deployment becomes the current test version. No production host or production database is part of this workflow.
 
 ## GitHub environment
 
@@ -38,10 +38,10 @@ Environment variables:
 - `STAGING_SSH_PORT`
 - `STAGING_SSH_USER` (normally `beihai`)
 - `STAGING_PANEL_URL` (normally `https://xboard.uegov.org`)
-- `STAGING_ADMIN_PATH` (the initial validated secure path for a fresh test database; it can later be changed in Xboard Admin)
+- `STAGING_ADMIN_PATH` (the validated secure path maintained by the staging bootstrap; it can later be changed in Xboard Admin)
 - `STAGING_TEST_USER_EMAIL` (normally `test@test.user`)
 - `STAGING_NODE_HOST`
-- `STAGING_NODE_ID` (must remain `1` for the fresh database)
+- `STAGING_NODE_ID` (must remain `1` for the deterministic staging node)
 - `STAGING_NODE_PUBLIC_PORT`
 - `STAGING_NODE_LISTEN_PORT`
 - `STAGING_DK_THEME_IMAGE`: published `ghcr.io/voidintheshell/dk_theme:<version-tag>` reference used for a full stack bootstrap or rebuild
@@ -51,13 +51,13 @@ The same value stored as `STAGING_SERVER_TOKEN` here must be stored as `STAGING_
 
 Both frontend image variables contain version-tagged references from their respective publish jobs, for example `ghcr.io/voidintheshell/xboard-admin:build-123456789-1`. Copy them from the successful run's `Report staging image tag` step or job summary; the tag includes the run attempt so rerunning a build has a distinct version. A `workflow_dispatch` full rebuild may override either variable with another published version tag, including an existing release tag such as `v1.2.3`. Refresh both variables after publishing frontend changes and before a full rebuild. The deployment stores the supplied tags unchanged and does not calculate or compare image SHA256 values.
 
-The fresh database creates node `1` as VLESS over WebSocket, a dedicated `Staging Access` server group, and the disposable test user assigned to that group. Its public endpoint is the DNS hostname on port `443`; TLS is terminated by the US2 reverse-proxy/cover entrypoint, while Xboard-Node listens without TLS on the private `STAGING_NODE_LISTEN_PORT`. This split is represented by the fork-specific `protocol_settings.server_tls` field so client subscriptions keep TLS enabled without requiring the node process to own port 443.
+The initial database creates node `1` as VLESS over WebSocket, a dedicated `Staging Access` server group, and the staging test user assigned to that group. Later deployments update that named baseline without deleting manually added servers, machines or native inbound configuration. Its public endpoint is the DNS hostname on port `443`; TLS is terminated by the US2 reverse-proxy/cover entrypoint, while Xboard-Node listens without TLS on the private `STAGING_NODE_LISTEN_PORT`. This split is represented by the fork-specific `protocol_settings.server_tls` field so client subscriptions keep TLS enabled without requiring the node process to own port 443.
 
 Do not publish the staging node DNS record until the US2 reverse proxy and cover site are healthy. The panel record can exist first because the disposable database is rebuilt independently from the node host.
 
 ## Safety and recovery
 
-The remote script hard-checks the target and incoming bundle paths, then takes `/home/beihai/docker/xboard/.deploy.lock`. A failed install leaves the Actions run red and includes container status/log tails without printing externally supplied administrator credentials.
+The remote script hard-checks the target and incoming bundle paths, then takes `/home/beihai/docker/xboard/.deploy.lock`. Before a migration it stops the App, creates a WAL-safe SQLite snapshot, and compares protected table counts after bootstrap. A regression restores the verified pre-deploy snapshot and leaves the Actions run red without printing externally supplied administrator credentials.
 
 To deploy a feature branch, open `Docker Build, Publish and Deploy`, choose **Run workflow**, select that branch, and run it. Do not replace the image manually over SSH. To inspect the server without changing it:
 

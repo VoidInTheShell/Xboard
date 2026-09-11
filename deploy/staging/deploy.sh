@@ -60,6 +60,7 @@ require_file "$RESOLVED_BUNDLE/admin_password"
 require_file "$RESOLVED_BUNDLE/server_token"
 require_file "$RESOLVED_BUNDLE/test_user_password"
 require_file "$RESOLVED_BUNDLE/admin_route_token"
+require_file "$RESOLVED_BUNDLE/sqlite-data-guard.php"
 
 XBOARD_IMAGE=$(sed -n 's/^XBOARD_IMAGE=//p' "$RESOLVED_BUNDLE/deploy.env" | tail -1)
 DK_THEME_IMAGE=$(sed -n 's/^DK_THEME_IMAGE=//p' "$RESOLVED_BUNDLE/deploy.env" | tail -1)
@@ -76,38 +77,16 @@ exec 9>"$TARGET_DIR/.deploy.lock"
 flock -x 9
 log "acquired deployment lock"
 
-if [ -f "$TARGET_DIR/compose.yaml" ]; then
-    log "stopping the previous test stack"
-    if [ -f "$TARGET_DIR/.deploy.env" ]; then
-        sudo -n docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" down --volumes --remove-orphans || true
-    else
-        sudo -n docker compose -f "$TARGET_DIR/compose.yaml" down --volumes --remove-orphans || true
-    fi
-fi
+had_database=0
+[ ! -f "$TARGET_DIR/data/database.sqlite" ] || had_database=1
 
-for runtime_name in data logs plugins themes uploads secrets backups theme-dist; do
-    runtime_path=$(realpath -m "$TARGET_DIR/$runtime_name")
-    case "$runtime_path" in
-        "$EXPECTED_TARGET"/*) sudo -n rm -rf -- "$runtime_path" ;;
-        *) fail "refusing to remove unexpected runtime path: $runtime_path" ;;
-    esac
-done
-
-for runtime_file in .env install-secrets.txt admin-path.txt nginx.conf nginx.conf.template theme-index.html; do
-    file_path=$(realpath -m "$TARGET_DIR/$runtime_file")
-    case "$file_path" in
-        "$EXPECTED_TARGET"/*) sudo -n rm -f -- "$file_path" ;;
-        *) fail "refusing to remove unexpected runtime file: $file_path" ;;
-    esac
-done
-
-find "$TARGET_DIR" -maxdepth 1 -type f -name 'dk-theme-*-production.tar.gz' -delete
-
-sudo -n chown -R beihai:beihai "$TARGET_DIR"
+sudo -n chown beihai:beihai "$TARGET_DIR"
 install -d -m 700 "$TARGET_DIR/secrets"
-install -d -m 755 "$TARGET_DIR/data" "$TARGET_DIR/logs" "$TARGET_DIR/plugins" "$TARGET_DIR/themes" "$TARGET_DIR/uploads"
+install -d -m 755 "$TARGET_DIR/data" "$TARGET_DIR/logs" "$TARGET_DIR/plugins" "$TARGET_DIR/themes" "$TARGET_DIR/uploads" "$TARGET_DIR/bootstrap"
+install -d -m 700 "$TARGET_DIR/backups"
 install -m 644 "$RESOLVED_BUNDLE/compose.yaml" "$TARGET_DIR/compose.yaml"
 install -m 600 "$RESOLVED_BUNDLE/deploy.env" "$TARGET_DIR/.deploy.env"
+install -m 644 "$RESOLVED_BUNDLE/sqlite-data-guard.php" "$TARGET_DIR/bootstrap/sqlite-data-guard.php"
 install -m 600 "$RESOLVED_BUNDLE/admin_password" "$TARGET_DIR/secrets/admin_password"
 install -m 600 "$RESOLVED_BUNDLE/server_token" "$TARGET_DIR/secrets/server_token"
 install -m 600 "$RESOLVED_BUNDLE/test_user_password" "$TARGET_DIR/secrets/test_user_password"
@@ -117,7 +96,11 @@ install -m 600 "$RESOLVED_BUNDLE/admin_route_token" "$TARGET_DIR/secrets/admin_r
 # service group; other bootstrap secrets stay private to the host user/root.
 sudo -n chown 0:1000 "$TARGET_DIR/secrets/admin_route_token"
 sudo -n chmod 640 "$TARGET_DIR/secrets/admin_route_token"
-install -m 600 /dev/null "$TARGET_DIR/.env"
+if [ "$had_database" = 0 ]; then
+    install -m 600 /dev/null "$TARGET_DIR/.env"
+else
+    [ -f "$TARGET_DIR/.env" ] || fail "an existing staging database is missing its .env file"
+fi
 
 AUTH_DIR=$(mktemp -d "/tmp/xboard-docker-auth.XXXXXX")
 ANON_DIR=$(mktemp -d "/tmp/xboard-docker-anon.XXXXXX")
@@ -142,8 +125,27 @@ compose() {
     sudo -n docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
 }
 
-log "installing a fresh SQLite staging database"
-compose run --rm bootstrap php artisan xboard:install --no-interaction
+baseline_database=""
+if [ "$had_database" = 1 ]; then
+    log "preserving the existing staging database"
+    compose stop xboard || true
+    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+    release_backup="$TARGET_DIR/backups/release-${timestamp}"
+    install -d -m 700 "$release_backup"
+    baseline_database="/backups/release-${timestamp}/database.sqlite"
+    if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php snapshot /www/.docker/.data/database.sqlite "$baseline_database"; then
+        compose up -d xboard || true
+        fail "could not create a consistent staging database snapshot"
+    fi
+    if ! compose run --rm --no-deps bootstrap php artisan migrate --force; then
+        compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php restore "$baseline_database" /www/.docker/.data/database.sqlite || true
+        compose up -d xboard || true
+        fail "staging migration failed; the pre-deploy database was restored"
+    fi
+else
+    log "installing the initial SQLite staging database"
+    compose run --rm bootstrap php artisan xboard:install --no-interaction
+fi
 
 log "starting the panel so its embedded Redis socket is available"
 compose up -d xboard
@@ -156,6 +158,14 @@ sudo -n docker exec xboard-app test -S /data/redis.sock || fail "the embedded Re
 
 log "creating the deterministic staging node record"
 compose run --rm bootstrap php artisan xboard:staging-bootstrap --no-interaction
+
+if [ "$had_database" = 1 ]; then
+    if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php assert-not-decreased "$baseline_database" /www/.docker/.data/database.sqlite; then
+        compose stop xboard || true
+        compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php restore "$baseline_database" /www/.docker/.data/database.sqlite || true
+        fail "protected staging business records decreased; the pre-deploy database was restored"
+    fi
+fi
 
 log "restarting the panel to load the new settings, then starting the standalone admin"
 compose restart xboard

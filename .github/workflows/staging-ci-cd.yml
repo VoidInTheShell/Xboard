@@ -112,6 +112,15 @@ jobs:
           docker run --rm --entrypoint php \
             --volume "${GITHUB_WORKSPACE}/deploy/production/bootstrap/production-bootstrap.php:/tmp/production-bootstrap.php:ro" \
           xboard-ci:${GITHUB_SHA} -l /tmp/production-bootstrap.php
+          docker run --rm --entrypoint php \
+            --volume "${GITHUB_WORKSPACE}/deploy/shared/sqlite-data-guard.php:/tmp/sqlite-data-guard.php:ro" \
+          xboard-ci:${GITHUB_SHA} -l /tmp/sqlite-data-guard.php
+          docker run --rm --entrypoint php \
+            --volume "${GITHUB_WORKSPACE}/deploy/production/recovery/merge-server-configuration.php:/tmp/merge-server-configuration.php:ro" \
+          xboard-ci:${GITHUB_SHA} -l /tmp/merge-server-configuration.php
+          docker run --rm --entrypoint php \
+            --volume "${GITHUB_WORKSPACE}/deploy:/workspace/deploy:ro" \
+          xboard-ci:${GITHUB_SHA} /workspace/deploy/tests/data-safety.php
           grep -q '^# XBOARD-MCP-COMPAT$' deploy/production/bunkerweb/xboard-mcp.conf
           grep -q '^# XBOARD-NODE-CONTROL-COMPAT$' deploy/production/bunkerweb/xboard-mcp.conf
           grep -Fq 'location ^~ /api/v2/server/' deploy/production/bunkerweb/xboard-mcp.conf
@@ -349,6 +358,7 @@ jobs:
           install -d -m 700 "${BUNDLE_DIR}"
           install -m 644 deploy/staging/compose.yaml "${BUNDLE_DIR}/compose.yaml"
           install -m 700 deploy/staging/deploy.sh "${BUNDLE_DIR}/deploy.sh"
+          install -m 644 deploy/shared/sqlite-data-guard.php "${BUNDLE_DIR}/sqlite-data-guard.php"
           printf '%s' "${ADMIN_PASSWORD}" > "${BUNDLE_DIR}/admin_password"
           printf '%s' "${SERVER_TOKEN}" > "${BUNDLE_DIR}/server_token"
           printf '%s' "${TEST_USER_PASSWORD}" > "${BUNDLE_DIR}/test_user_password"

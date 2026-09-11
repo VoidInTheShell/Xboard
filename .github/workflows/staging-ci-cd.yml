@@ -402,6 +402,38 @@ jobs:
           NEXT_ADMIN_PATH="xboard-admin-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           path_changed=0
           auth_data=""
+          wait_for_standalone_page() {
+            local url="$1"
+            local destination="$2"
+            local attempt
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent --show-error "${url}" > "${destination}" &&
+                grep --fixed-strings '<title>XBoard Admin</title>' "${destination}" > /dev/null &&
+                grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${destination}" > /dev/null &&
+                grep --fixed-strings './assets/' "${destination}" > /dev/null; then
+                return 0
+              fi
+              sleep 2
+            done
+            echo "ERROR: standalone administrator route did not converge" >&2
+            return 1
+          }
+          wait_for_original_admin_page() {
+            local url="$1"
+            local destination="$2"
+            local attempt
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent --show-error "${url}" > "${destination}" &&
+                grep --extended-regexp '<title>[^<]+</title>' "${destination}" > /dev/null &&
+                grep --fixed-strings '/assets/admin/' "${destination}" > /dev/null &&
+                ! grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${destination}" > /dev/null; then
+                return 0
+              fi
+              sleep 2
+            done
+            echo "ERROR: original administrator fallback route did not converge" >&2
+            return 1
+          }
           restore_admin_path() {
             [ "${path_changed}" = "1" ] || return 0
             jq -n --arg path "${ADMIN_PATH}" '{secure_path: $path}' > "${config_request}" || return 1
@@ -424,11 +456,9 @@ jobs:
             exit "${status}"
           }
           trap restore_on_exit EXIT
-          curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 \
-            "${PANEL_URL}/${ADMIN_PATH}/" > "${admin_page}"
-          grep --fixed-strings '<title>XBoard Admin</title>' "${admin_page}" > /dev/null
-          grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${admin_page}" > /dev/null
-          grep --fixed-strings './assets/' "${admin_page}" > /dev/null
+          echo 'check=initial-standalone-route'
+          wait_for_standalone_page "${PANEL_URL}/${ADMIN_PATH}/" "${admin_page}"
+          echo 'check=administrator-login'
           jq -n --arg email "${ADMIN_ACCOUNT}" --arg password "${ADMIN_PASSWORD}" \
             '{email: $email, password: $password}' > "${login_request}"
           login_status=$(curl --silent --show-error --output "${login_response}" --write-out '%{http_code}' \
@@ -436,6 +466,7 @@ jobs:
             "${PANEL_URL}/api/v1/passport/auth/login")
           test "${login_status}" = "200"
           auth_data=$(jq -er '.data.auth_data | select(type == "string" and startswith("Bearer "))' "${login_response}")
+          echo 'check=change-administrator-route'
           jq -n --arg path "${NEXT_ADMIN_PATH}" '{secure_path: $path}' > "${config_request}"
           curl --fail --silent --show-error \
             --header "Authorization: ${auth_data}" \
@@ -444,24 +475,19 @@ jobs:
             "${PANEL_URL}/api/v2/${ADMIN_PATH}/config/save" > "${config_response}"
           jq -e '.data == true' "${config_response}" > /dev/null
           path_changed=1
-          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 2 \
-            "${PANEL_URL}/${NEXT_ADMIN_PATH}/" > "${new_admin_page}"
-          grep --fixed-strings '<title>XBoard Admin</title>' "${new_admin_page}" > /dev/null
-          grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${new_admin_page}" > /dev/null
+          echo 'check=changed-standalone-route'
+          wait_for_standalone_page "${PANEL_URL}/${NEXT_ADMIN_PATH}/" "${new_admin_page}"
+          echo 'check=changed-administrator-config'
           curl --fail --silent --show-error \
             --header "Authorization: ${auth_data}" \
             "${PANEL_URL}/api/v2/${NEXT_ADMIN_PATH}/config/fetch?key=safe" > "${config_response}"
           jq -e --arg path "${NEXT_ADMIN_PATH}" '.data.safe.secure_path == $path' "${config_response}" > /dev/null
-          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 2 \
-            "${PANEL_URL}/${NEXT_ADMIN_PATH}/original" > "${original_admin_page}"
-          grep --extended-regexp '<title>[^<]+</title>' "${original_admin_page}" > /dev/null
-          grep --fixed-strings '/assets/admin/' "${original_admin_page}" > /dev/null
-          ! grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${original_admin_page}" > /dev/null
+          echo 'check=legacy-original-fallback'
+          wait_for_original_admin_page "${PANEL_URL}/${NEXT_ADMIN_PATH}/original" "${original_admin_page}"
+          echo 'check=restore-administrator-route'
           restore_admin_path
-          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 2 \
-            "${PANEL_URL}/${ADMIN_PATH}/" > "${restored_admin_page}"
-          grep --fixed-strings '<title>XBoard Admin</title>' "${restored_admin_page}" > /dev/null
-          grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${restored_admin_page}" > /dev/null
+          echo 'check=restored-standalone-route'
+          wait_for_standalone_page "${PANEL_URL}/${ADMIN_PATH}/" "${restored_admin_page}"
 
       - name: Remove sensitive deployment bundle
         if: always()

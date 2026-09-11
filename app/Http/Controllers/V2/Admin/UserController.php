@@ -457,11 +457,12 @@ class UserController extends Controller
         // 判断是否导出 CSV
         if ($request->input('download_csv')) {
             $headers = [
-                'Content-Type' => 'text/csv',
+                'Content-Type' => 'text/csv; charset=UTF-8',
                 'Content-Disposition' => 'attachment; filename="users.csv"',
             ];
             $callback = function () use ($users, $request) {
                 $handle = fopen('php://output', 'w');
+                fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF));
                 fputcsv($handle, ['账号', '密码', '过期时间', 'UUID', '创建时间', '订阅地址']);
                 foreach ($users as $user) {
                     $user = $user->refresh();
@@ -538,11 +539,12 @@ class UserController extends Controller
         // 判断是否导出 CSV
         if ($request->input('download_csv')) {
             $headers = [
-                'Content-Type' => 'text/csv',
+                'Content-Type' => 'text/csv; charset=UTF-8',
                 'Content-Disposition' => 'attachment; filename="users.csv"',
             ];
             $callback = function () use ($users, $request) {
                 $handle = fopen('php://output', 'w');
+                fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF));
                 fputcsv($handle, ['账号', '密码', '过期时间', 'UUID', '创建时间', '订阅地址']);
                 foreach ($users as $user) {
                     $user = $user->refresh();

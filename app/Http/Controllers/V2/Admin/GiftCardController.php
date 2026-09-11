@@ -241,11 +241,12 @@ class GiftCardController extends Controller
             // 判断是否导出 CSV
             if ($request->input('download_csv')) {
                 $headers = [
-                    'Content-Type' => 'text/csv',
+                    'Content-Type' => 'text/csv; charset=UTF-8',
                     'Content-Disposition' => 'attachment; filename="gift_codes.csv"',
                 ];
                 $callback = function () use ($codes, $template) {
                     $handle = fopen('php://output', 'w');
+                    fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF));
                     // 表头
                     fputcsv($handle, [
                         '兑换码',

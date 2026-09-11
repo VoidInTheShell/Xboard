@@ -45,7 +45,9 @@ grep -Fq '<title>XBoard Admin</title>' "$admin_page" || fail "the standalone adm
 grep -Fq 'data-xboard-admin-shell="standalone"' "$admin_page" || fail "the standalone administrator marker is missing"
 grep -Fq './assets/' "$admin_page" || fail "the standalone administrator relative assets are missing"
 public_curl "$PANEL_URL/${active_path}/original" > "$original_admin_page"
-grep -Fq '<title>XBoard</title>' "$original_admin_page" || fail "the built-in administrator title is missing"
+# The built-in Admin title is configured by the operator, so only require a
+# non-empty document title rather than a stock XBoard brand string.
+grep -Eq '<title>[^<]+</title>' "$original_admin_page" || fail "the built-in administrator title is missing"
 grep -Fq '/assets/admin/' "$original_admin_page" || fail "the built-in administrator assets are missing"
 ! grep -Fq 'data-xboard-admin-shell="standalone"' "$original_admin_page" || fail "the fallback unexpectedly served the standalone administrator"
 

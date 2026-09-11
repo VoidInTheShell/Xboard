@@ -112,6 +112,11 @@ install -m 600 "$RESOLVED_BUNDLE/admin_password" "$TARGET_DIR/secrets/admin_pass
 install -m 600 "$RESOLVED_BUNDLE/server_token" "$TARGET_DIR/secrets/server_token"
 install -m 600 "$RESOLVED_BUNDLE/test_user_password" "$TARGET_DIR/secrets/test_user_password"
 install -m 600 "$RESOLVED_BUNDLE/admin_route_token" "$TARGET_DIR/secrets/admin_route_token"
+# The application worker runs as UID/GID 1000. Docker file secrets preserve
+# this source file's ownership and mode, so expose this token only to that
+# service group; other bootstrap secrets stay private to the host user/root.
+sudo -n chown 0:1000 "$TARGET_DIR/secrets/admin_route_token"
+sudo -n chmod 640 "$TARGET_DIR/secrets/admin_route_token"
 install -m 600 /dev/null "$TARGET_DIR/.env"
 
 AUTH_DIR=$(mktemp -d "/tmp/xboard-docker-auth.XXXXXX")

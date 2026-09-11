@@ -7,6 +7,14 @@ on:
     branches: ["**"]
   workflow_dispatch:
     inputs:
+      deployment_target:
+        description: Choose whether this manual dispatch rebuilds staging or deploys JPGREEN production.
+        required: false
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
       dk_theme_image:
         description: DK Theme GHCR image with version tag for this full-stack rebuild. Defaults to the staging Environment variable.
         required: false
@@ -227,7 +235,7 @@ jobs:
     if: >-
       startsWith(github.ref, 'refs/heads/') &&
       (
-        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'workflow_dispatch' && inputs.deployment_target == 'staging') ||
         (github.event_name == 'push' && github.ref == 'refs/heads/dev')
       )
     needs: build-and-push
@@ -446,7 +454,7 @@ jobs:
           jq -e --arg path "${NEXT_ADMIN_PATH}" '.data.safe.secure_path == $path' "${config_response}" > /dev/null
           curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 2 \
             "${PANEL_URL}/${NEXT_ADMIN_PATH}/original" > "${original_admin_page}"
-          grep --fixed-strings '<title>XBoard</title>' "${original_admin_page}" > /dev/null
+          grep --extended-regexp '<title>[^<]+</title>' "${original_admin_page}" > /dev/null
           grep --fixed-strings '/assets/admin/' "${original_admin_page}" > /dev/null
           ! grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${original_admin_page}" > /dev/null
           restore_admin_path
@@ -471,7 +479,8 @@ jobs:
     name: Deploy JPGREEN production
     if: >-
       github.ref == 'refs/heads/master' &&
-      github.event_name == 'workflow_dispatch'
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deployment_target == 'production'
     needs: build-and-push
     runs-on: ubuntu-latest
     concurrency:

@@ -130,9 +130,16 @@ install -o root -g root -m 700 "$0" "$TARGET_DIR/deploy.sh"
 install -o root -g root -m 700 "$ASSET_DIR/apply-mcp-compat.sh" "$TARGET_DIR/bunkerweb/apply-mcp-compat.sh"
 install -o root -g root -m 644 "$ASSET_DIR/xboard-mcp.conf" "$TARGET_DIR/bunkerweb/xboard-mcp.conf"
 install -o root -g root -m 644 "$ASSET_DIR/production-bootstrap.php" "$TARGET_DIR/bootstrap/production-bootstrap.php"
-for secret in admin_password server_token test_user_password admin_route_token; do
+for secret in admin_password server_token test_user_password; do
     install -o root -g root -m 600 "$CONTROL_DIR/secrets/$secret" "$TARGET_DIR/secrets/$secret"
 done
+install -o root -g root -m 600 "$CONTROL_DIR/secrets/admin_route_token" "$TARGET_DIR/secrets/admin_route_token"
+# Docker file secrets retain the source file mode. Octane runs as UID/GID 1000,
+# so grant only that service group read access to the route token. The control
+# copy remains root-only above, and the non-privileged host user is not in GID
+# 1000.
+chown 0:1000 "$TARGET_DIR/secrets/admin_route_token"
+chmod 640 "$TARGET_DIR/secrets/admin_route_token"
 
 DK_THEME_IMAGE="$REQUESTED_THEME_IMAGE"
 XBOARD_ADMIN_IMAGE="$REQUESTED_ADMIN_IMAGE"

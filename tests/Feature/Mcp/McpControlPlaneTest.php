@@ -5,6 +5,7 @@ namespace Tests\Feature\Mcp;
 use App\Http\Controllers\V2\Admin\McpController;
 use App\Http\Controllers\V2\Admin\NoticeController;
 use App\Models\McpKey;
+use App\Models\Server;
 use App\Models\User;
 use App\Services\AdminOperationCatalog;
 use App\Services\McpKeyService;
@@ -170,6 +171,39 @@ class McpControlPlaneTest extends TestCase
 
         $this->assertDatabaseMissing('v2_notice', ['title' => 'Must roll back']);
         $this->assertDatabaseCount('v2_change_event', 1);
+    }
+
+    public function test_mcp_preserves_nested_json_for_xray_preflight(): void
+    {
+        $secret = $this->secretFor();
+        $node = Server::withoutEvents(fn () => Server::create([
+            'name' => 'MCP Xray test',
+            'type' => 'vless',
+            'host' => 'localhost',
+            'port' => 18080,
+            'server_port' => 18080,
+            'rate' => 1,
+            'protocol_settings' => [
+                'tls' => 0,
+                'flow' => '',
+                'tls_settings' => [],
+            ],
+        ]));
+
+        $this->callTool($secret, 'xboard_admin_mutate', [
+            'operation' => 'server.xray.validate.post',
+            'expected_change_version' => 0,
+            'parameters' => [
+                'node_id' => $node->id,
+                'expected_revision' => 0,
+                'xray_config' => [
+                    'routing' => ['rules' => []],
+                ],
+            ],
+        ])->assertOk()
+            ->assertJsonPath('result.isError', false)
+            ->assertJsonPath('result.structuredContent.status', 200)
+            ->assertJsonPath('result.structuredContent.body.data.valid', true);
     }
 
     public function test_dangerous_mutation_requires_exact_catalog_confirmation(): void

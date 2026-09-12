@@ -70,10 +70,18 @@ class XrayControlTest extends TestCase
     public function test_default_rules_are_visible_but_only_enabled_runtime_rules_are_sent(): void
     {
         $node = $this->node();
-        $node->xray_config = XrayConfigService::defaultNodeConfig();
+        $config = XrayConfigService::defaultNodeConfig();
+        $config->routing->rules[] = (object) [
+            'type' => 'field',
+            'outboundTag' => 'direct',
+        ];
+        $node->xray_config = $config;
         $node->saveQuietly();
 
         $snapshot = XrayConfigService::snapshot($node->fresh());
+        // Legacy panels stored a matchless direct row as the default route.
+        // The first outbound now provides that fallback and the invalid row is
+        // omitted from both the editable projection and the runtime payload.
         $this->assertCount(3, $snapshot['effective_config']->routing->rules);
         $this->assertSame('api', $snapshot['effective_config']->routing->rules[0]->outboundTag);
         $this->assertSame('direct', $snapshot['default_outbound_tag']);

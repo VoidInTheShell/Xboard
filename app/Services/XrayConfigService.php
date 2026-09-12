@@ -787,6 +787,7 @@ class XrayConfigService
         self::appendSystemOutbounds($config);
         self::selectDefaultOutbound($config, $node);
         self::validate($config, $node);
+        self::removeMatchlessFieldRules($config);
         return $config;
     }
 
@@ -804,7 +805,9 @@ class XrayConfigService
 
         $rules = [];
         foreach ($routing->rules as $rule) {
-            if (!$rule instanceof stdClass || self::isPanelApiRule($rule)) {
+            if (!$rule instanceof stdClass
+                || self::isPanelApiRule($rule)
+                || self::isMatchlessFieldRule($rule)) {
                 continue;
             }
             if (property_exists($rule, 'enabled') && $rule->enabled === false) {
@@ -2121,6 +2124,29 @@ class XrayConfigService
             && in_array('api', $rule->inboundTag, true);
     }
 
+    /**
+     * Xray rejects field rules without a matcher. Older panels used such a
+     * row as a catch-all, but the selected first outbound already owns that
+     * fallback behavior.
+     */
+    private static function isMatchlessFieldRule(stdClass $rule): bool
+    {
+        if (strtolower(trim((string) ($rule->type ?? 'field'))) !== 'field') {
+            return false;
+        }
+
+        foreach (get_object_vars($rule) as $field => $value) {
+            if (in_array($field, ['type', 'outboundTag', 'balancerTag', 'enabled', 'ruleTag', 'webhook'], true)) {
+                continue;
+            }
+            if (is_string($value) && trim($value) !== '') return false;
+            if (is_array($value) && $value !== []) return false;
+            if ($value instanceof stdClass && get_object_vars($value) !== []) return false;
+            if ($value !== null && !is_string($value) && !is_array($value) && !$value instanceof stdClass) return false;
+        }
+        return true;
+    }
+
     /** Keep the panel-owned API row canonical even when legacy/native input edits it. */
     private static function maintainPanelApiRule(stdClass $config): void
     {
@@ -2148,6 +2174,20 @@ class XrayConfigService
             'enabled' => true,
         ]));
         $config->routing->rules = $rules;
+    }
+
+    /** Remove legacy catch-all rows after reference validation has run. */
+    private static function removeMatchlessFieldRules(stdClass $config): void
+    {
+        if (!isset($config->routing) || !$config->routing instanceof stdClass
+            || !is_array($config->routing->rules ?? null)) {
+            return;
+        }
+
+        $config->routing->rules = array_values(array_filter(
+            $config->routing->rules,
+            static fn ($rule) => !$rule instanceof stdClass || !self::isMatchlessFieldRule($rule),
+        ));
     }
 
     private static function assertCandidateGraph(

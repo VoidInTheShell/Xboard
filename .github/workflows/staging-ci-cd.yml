@@ -372,7 +372,7 @@ jobs:
             printf 'STAGING_TEST_USER_EMAIL=%s\n' "${TEST_USER_EMAIL}"
             printf 'STAGING_PANEL_URL=%s\n' "${PANEL_URL}"
             printf 'STAGING_ADMIN_PATH=%s\n' "${ADMIN_PATH}"
-            printf 'STAGING_NODE_NAME=%s\n' 'US2 Staging'
+            printf 'STAGING_NODE_NAME=%s\n' 'US3 XHTTP'
             printf 'STAGING_NODE_HOST=%s\n' "${NODE_HOST}"
             printf 'STAGING_NODE_ID=%s\n' "${NODE_ID}"
             printf 'STAGING_NODE_PUBLIC_PORT=%s\n' "${NODE_PUBLIC_PORT}"

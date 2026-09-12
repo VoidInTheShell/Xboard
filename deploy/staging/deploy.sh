@@ -156,8 +156,10 @@ if ! wait_for_healthy xboard-app; then
 fi
 sudo -n docker exec xboard-app test -S /data/redis.sock || fail "the embedded Redis socket is not available"
 
-log "creating the deterministic staging node record"
-compose run --rm bootstrap php artisan xboard:staging-bootstrap --no-interaction
+if [ "$had_database" = 0 ]; then
+    log "creating initial staging accounts and node"
+    compose run --rm bootstrap php artisan xboard:staging-bootstrap --no-interaction
+fi
 
 if [ "$had_database" = 1 ]; then
     if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php assert-not-decreased "$baseline_database" /www/.docker/.data/database.sqlite; then

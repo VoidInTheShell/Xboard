@@ -76,6 +76,41 @@ class XrayConfigService
         ], true);
     }
 
+    /** Editable baseline installed for every newly managed Xray node. */
+    public static function defaultNodeConfig(): stdClass
+    {
+        return json_decode(json_encode([
+            'routing' => [
+                'rules' => [
+                    [
+                        'type' => 'field',
+                        'inboundTag' => ['api'],
+                        'outboundTag' => 'api',
+                        'enabled' => true,
+                    ],
+                    [
+                        'type' => 'field',
+                        'ip' => ['geoip:cn'],
+                        'outboundTag' => 'block',
+                        'enabled' => true,
+                    ],
+                    [
+                        'type' => 'field',
+                        'domain' => [
+                            'geosite:cn',
+                            'domain:googleapis.cn',
+                            'domain:google.cn',
+                            'geosite:google-play@cn',
+                            'domain:ping0.cc',
+                        ],
+                        'outboundTag' => 'block',
+                        'enabled' => true,
+                    ],
+                ],
+            ],
+        ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), false, 512, JSON_THROW_ON_ERROR);
+    }
+
     /**
      * Raise a machine-addressable validation response.
      *
@@ -317,7 +352,11 @@ class XrayConfigService
             }
         }
 
-        $knownTags = ['direct', 'block'];
+        // `api` is a panel-only maintenance target. It is displayed with the
+        // native rule list for familiar Xray semantics, then removed from the
+        // runtime payload because Xboard-Node embeds the core and reads stats
+        // directly instead of exposing Xray's gRPC API listener.
+        $knownTags = ['direct', 'block', 'api'];
         $graph = [];
         $seen = [];
 
@@ -744,8 +783,37 @@ class XrayConfigService
             }
         }
 
+        self::maintainPanelApiRule($config);
         self::appendSystemOutbounds($config);
+        self::selectDefaultOutbound($config, $node);
         self::validate($config, $node);
+        return $config;
+    }
+
+    /**
+     * Return the exact native patch sent to Xboard-Node. Disabled rules and the
+     * panel-only api maintenance rule must never reach Xray's strict schema.
+     */
+    public static function runtime(Server $node, array $candidateOverrides = []): stdClass
+    {
+        $config = self::cloneValue(self::effective($node, $candidateOverrides));
+        $routing = $config->routing ?? null;
+        if (!$routing instanceof stdClass || !is_array($routing->rules ?? null)) {
+            return $config;
+        }
+
+        $rules = [];
+        foreach ($routing->rules as $rule) {
+            if (!$rule instanceof stdClass || self::isPanelApiRule($rule)) {
+                continue;
+            }
+            if (property_exists($rule, 'enabled') && $rule->enabled === false) {
+                continue;
+            }
+            unset($rule->enabled);
+            $rules[] = $rule;
+        }
+        $routing->rules = $rules;
         return $config;
     }
 
@@ -814,8 +882,8 @@ class XrayConfigService
             'effective_inbound' => $effectiveInbound,
             'client_settings' => self::clientSettingsSnapshot($node),
             'config_revision' => (int) ($node->config_revision ?? 0),
-            'config_hash' => self::hash($effective),
-            'default_outbound_tag' => self::defaultOutboundTag($effective),
+            'config_hash' => self::hash(self::runtime($node)),
+            'default_outbound_tag' => (string) ($node->default_outbound_tag ?: 'direct'),
             'application' => self::applicationReport($application),
             // null means the instance has no binding source; [] is retained
             // as an explicit empty ordered source for instances without
@@ -1991,6 +2059,9 @@ class XrayConfigService
             if (!$rule instanceof stdClass) {
                 self::fail('xray_config.routing.rules entries must be objects');
             }
+            if (property_exists($rule, 'enabled') && !is_bool($rule->enabled)) {
+                self::fail('xray_config.routing rule enabled must be boolean');
+            }
             if (property_exists($rule, 'outboundTag') && property_exists($rule, 'balancerTag')) {
                 self::fail('A routing rule cannot target both an outbound and a balancer');
             }
@@ -2012,7 +2083,7 @@ class XrayConfigService
     private static function appendSystemOutbounds(stdClass $config): void
     {
         if (!property_exists($config, 'outbounds')) {
-            return;
+            $config->outbounds = [];
         }
         $tags = [];
         foreach ($config->outbounds as $outbound) {
@@ -2026,6 +2097,57 @@ class XrayConfigService
         if (!isset($tags['block'])) {
             $config->outbounds[] = (object) ['tag' => 'block', 'protocol' => 'blackhole'];
         }
+    }
+
+    private static function selectDefaultOutbound(stdClass $config, Server $node): void
+    {
+        $selected = trim((string) ($node->default_outbound_tag ?: 'direct'));
+        foreach ($config->outbounds as $index => $outbound) {
+            if ($outbound instanceof stdClass && ($outbound->tag ?? null) === $selected) {
+                if ($index > 0) {
+                    array_splice($config->outbounds, $index, 1);
+                    array_unshift($config->outbounds, $outbound);
+                }
+                return;
+            }
+        }
+        self::failAt('default_outbound_tag', "默认出站 '{$selected}' 不存在。", null);
+    }
+
+    private static function isPanelApiRule(stdClass $rule): bool
+    {
+        return ($rule->outboundTag ?? null) === 'api'
+            && is_array($rule->inboundTag ?? null)
+            && in_array('api', $rule->inboundTag, true);
+    }
+
+    /** Keep the panel-owned API row canonical even when legacy/native input edits it. */
+    private static function maintainPanelApiRule(stdClass $config): void
+    {
+        if (!property_exists($config, 'routing')) {
+            $config->routing = new stdClass();
+        }
+        if (!$config->routing instanceof stdClass) {
+            return;
+        }
+        if (!property_exists($config->routing, 'rules')) {
+            $config->routing->rules = [];
+        }
+        if (!is_array($config->routing->rules)) {
+            return;
+        }
+
+        $rules = array_values(array_filter(
+            $config->routing->rules,
+            static fn ($rule) => !$rule instanceof stdClass || !self::isPanelApiRule($rule),
+        ));
+        array_unshift($rules, self::object([
+            'type' => 'field',
+            'inboundTag' => ['api'],
+            'outboundTag' => 'api',
+            'enabled' => true,
+        ]));
+        $config->routing->rules = $rules;
     }
 
     private static function assertCandidateGraph(

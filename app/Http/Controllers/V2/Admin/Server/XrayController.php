@@ -8,6 +8,7 @@ use App\Models\Server;
 use App\Models\ServerMachine;
 use App\Services\XrayConfigService;
 use App\Services\VlessEncryptionService;
+use App\Services\OutboundImportService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use stdClass;
@@ -244,6 +245,41 @@ class XrayController extends Controller
         return $this->success(XrayConfigService::snapshot($node->fresh()));
     }
 
+    public function defaultOutbound(Request $request)
+    {
+        $nodeId = $this->nodeId($request);
+        $params = $request->validate([
+            'expected_revision' => 'nullable|integer|min:0',
+            'default_outbound_tag' => 'required|string|max:255',
+        ]);
+        $tag = trim($params['default_outbound_tag']);
+        if ($tag === '' || strtolower($tag) === 'api') {
+            XrayConfigService::failAt('default_outbound_tag', '请选择可用的运行出站。', null);
+        }
+
+        $node = DB::transaction(function () use ($nodeId, $params, $tag) {
+            $node = Server::query()->lockForUpdate()->findOrFail($nodeId);
+            if (array_key_exists('expected_revision', $params)
+                && (int) $params['expected_revision'] !== (int) ($node->config_revision ?? 0)) {
+                XrayConfigService::failAt(
+                    'expected_revision',
+                    '配置版本已变化，请重新加载后再修改默认出站。',
+                    null,
+                );
+            }
+            if (($node->default_outbound_tag ?: 'direct') === $tag) {
+                return $node;
+            }
+            $node->default_outbound_tag = $tag;
+            XrayConfigService::effective($node);
+            $node->config_revision = (int) ($node->config_revision ?? 0) + 1;
+            $node->save();
+            return $node;
+        });
+
+        return $this->success(XrayConfigService::snapshot($node->fresh()));
+    }
+
     public function machine(Request $request)
     {
         $params = $request->validate([
@@ -283,6 +319,14 @@ class XrayController extends Controller
             ->map(fn (Outbound $candidate) => XrayConfigService::candidateSnapshot($candidate))
             ->values()->all();
         return $this->success($candidates);
+    }
+
+    public function importOutbounds(Request $request, OutboundImportService $importer)
+    {
+        $params = $request->validate([
+            'source' => 'required|string|max:4194304',
+        ]);
+        return $this->success($importer->import($params['source']));
     }
 
     public function saveOutbound(Request $request)

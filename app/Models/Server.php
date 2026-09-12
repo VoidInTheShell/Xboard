@@ -32,6 +32,7 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
  * @property boolean $rate_time_enable 是否启用时间范围功能
  * @property array|null $rate_time_ranges 倍率时间范围
  * @property int|null $sort 排序
+ * @property string $default_outbound_tag 默认出站标记
  * @property array|null $protocol_settings 协议设置
  * @property int $created_at
  * @property int $updated_at
@@ -122,6 +123,7 @@ class Server extends Model
         'custom_outbounds' => 'array',
         'xray_config' => 'object',
         'outbound_bindings' => 'array',
+        'default_outbound_tag' => 'string',
         'config_revision' => 'integer',
         'xray_apply' => 'object',
         // Public VLESS client values that accompany a native inbound.  Keep

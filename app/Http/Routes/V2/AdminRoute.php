@@ -10,6 +10,7 @@ use App\Http\Controllers\V2\Admin\Server\RouteController;
 use App\Http\Controllers\V2\Admin\Server\ManageController;
 use App\Http\Controllers\V2\Admin\Server\MachineController;
 use App\Http\Controllers\V2\Admin\Server\XrayController;
+use App\Http\Controllers\V2\Admin\Server\RuleFileController;
 use App\Http\Controllers\V2\Admin\OrderController;
 use App\Http\Controllers\V2\Admin\UserController;
 use App\Http\Controllers\V2\Admin\StatController;
@@ -115,6 +116,7 @@ class AdminRoute
                 $router->post('/save', [XrayController::class, 'save']);
                 $router->get('/bindings', [XrayController::class, 'bindings']);
                 $router->post('/bindings', [XrayController::class, 'bindings']);
+                $router->post('/default-outbound', [XrayController::class, 'defaultOutbound']);
                 $router->get('/machine', [XrayController::class, 'machine']);
                 $router->post('/machine', [XrayController::class, 'machine']);
             });
@@ -122,9 +124,17 @@ class AdminRoute
                 $router->get('/fetch', [XrayController::class, 'outbounds']);
                 $router->post('/validate', [XrayController::class, 'validateOutbound']);
                 $router->post('/save', [XrayController::class, 'saveOutbound']);
+                $router->post('/import', [XrayController::class, 'importOutbounds']);
                 $router->get('/snapshot', [XrayController::class, 'snapshot']);
                 $router->post('/snapshot', [XrayController::class, 'snapshot']);
                 $router->post('/drop', [XrayController::class, 'dropOutbound']);
+            });
+            $router->group(['prefix' => 'server/xray/rule-file'], function ($router) {
+                $router->get('/fetch', [RuleFileController::class, 'fetch']);
+                $router->post('/validate', [RuleFileController::class, 'validateFile']);
+                $router->post('/save', [RuleFileController::class, 'save']);
+                $router->post('/download', [RuleFileController::class, 'download']);
+                $router->post('/drop', [RuleFileController::class, 'drop']);
             });
 
             $router->group([

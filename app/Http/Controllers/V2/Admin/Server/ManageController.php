@@ -68,6 +68,12 @@ class ManageController extends Controller
             }
         }
 
+        $candidate = new Server();
+        $candidate->fill($params);
+        if (XrayConfigService::supports($candidate)) {
+            $params['xray_config'] = XrayConfigService::defaultNodeConfig();
+            $params['default_outbound_tag'] = 'direct';
+        }
         $this->validateServerCandidate(null, $params);
         try {
             Server::create($params);

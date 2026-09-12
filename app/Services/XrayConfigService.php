@@ -794,6 +794,9 @@ class XrayConfigService
     /**
      * Return the exact native patch sent to Xboard-Node. Disabled rules and the
      * panel-only api maintenance rule must never reach Xray's strict schema.
+     * The selected node default is emitted as the final explicit catch-all so
+     * runtime behavior remains stable even when an agent merges system
+     * outbounds around the panel-owned list.
      */
     public static function runtime(Server $node, array $candidateOverrides = []): stdClass
     {
@@ -816,6 +819,11 @@ class XrayConfigService
             unset($rule->enabled);
             $rules[] = $rule;
         }
+        $rules[] = (object) [
+            'type' => 'field',
+            'network' => 'tcp,udp',
+            'outboundTag' => trim((string) ($node->default_outbound_tag ?: 'direct')),
+        ];
         $routing->rules = $rules;
         return $config;
     }
@@ -2124,11 +2132,7 @@ class XrayConfigService
             && in_array('api', $rule->inboundTag, true);
     }
 
-    /**
-     * Xray rejects field rules without a matcher. Older panels used such a
-     * row as a catch-all, but the selected first outbound already owns that
-     * fallback behavior.
-     */
+    /** Xray rejects the matchless catch-all rows written by older panels. */
     private static function isMatchlessFieldRule(stdClass $rule): bool
     {
         if (strtolower(trim((string) ($rule->type ?? 'field'))) !== 'field') {

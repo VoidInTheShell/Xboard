@@ -80,8 +80,8 @@ class XrayControlTest extends TestCase
 
         $snapshot = XrayConfigService::snapshot($node->fresh());
         // Legacy panels stored a matchless direct row as the default route.
-        // The first outbound now provides that fallback and the invalid row is
-        // omitted from both the editable projection and the runtime payload.
+        // It is omitted from the editable projection and replaced in the
+        // runtime payload by an explicit final tcp/udp catch-all.
         $this->assertCount(3, $snapshot['effective_config']->routing->rules);
         $this->assertSame('api', $snapshot['effective_config']->routing->rules[0]->outboundTag);
         $this->assertSame('direct', $snapshot['default_outbound_tag']);
@@ -101,9 +101,11 @@ class XrayControlTest extends TestCase
         $config->routing->rules[1]->enabled = false;
         $node->xray_config = $config;
         $runtime = XrayConfigService::runtime($node);
-        $this->assertCount(1, $runtime->routing->rules);
+        $this->assertCount(2, $runtime->routing->rules);
         $this->assertSame('geosite:cn', $runtime->routing->rules[0]->domain[0]);
         $this->assertObjectNotHasProperty('enabled', $runtime->routing->rules[0]);
+        $this->assertSame('tcp,udp', $runtime->routing->rules[1]->network);
+        $this->assertSame('direct', $runtime->routing->rules[1]->outboundTag);
     }
 
     public function test_quick_import_supports_subscription_vless_and_proxy_pool_links(): void
@@ -536,6 +538,9 @@ class XrayControlTest extends TestCase
         ])->assertOk()->json('data');
         $this->assertSame('remote-edge', $selected['default_outbound_tag']);
         $this->assertSame('remote-edge', $selected['effective_config']['outbounds'][0]['tag']);
+        $wire = ServerService::buildNodeConfig($target->fresh());
+        $this->assertSame('tcp,udp', $wire['xray_config']->routing->rules[array_key_last($wire['xray_config']->routing->rules)]->network);
+        $this->assertSame('remote-edge', $wire['xray_config']->routing->rules[array_key_last($wire['xray_config']->routing->rules)]->outboundTag);
         $this->getJson($this->path('snapshot') . '?id=' . $copy['id'])
             ->assertOk()->assertJsonPath('data.source_snapshot.source_node_id', $source->id);
     }

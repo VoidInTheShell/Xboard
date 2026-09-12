@@ -168,7 +168,10 @@ class XrayController extends Controller
             $node = Server::query()->lockForUpdate()->findOrFail($nodeId);
             if (array_key_exists('expected_revision', $params)
                 && (int) $params['expected_revision'] !== (int) ($node->config_revision ?? 0)) {
-                XrayConfigService::fail('Configuration changed; reload the node before saving');
+                XrayConfigService::failAt(
+                    'expected_revision',
+                    '配置版本已变化，请重新加载后再保存。',
+                );
             }
 
             // Validate the proposed effective configuration on an unsaved
@@ -234,7 +237,10 @@ class XrayController extends Controller
             $node = Server::query()->lockForUpdate()->findOrFail($nodeId);
             if (array_key_exists('expected_revision', $params)
                 && (int) $params['expected_revision'] !== (int) ($node->config_revision ?? 0)) {
-                XrayConfigService::fail('Configuration changed; reload the node before saving');
+                XrayConfigService::failAt(
+                    'expected_revision',
+                    '配置版本已变化，请重新加载后再修改出站绑定。',
+                );
             }
             $node->outbound_bindings = $bindings;
             XrayConfigService::effective($node);

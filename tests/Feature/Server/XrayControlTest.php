@@ -198,7 +198,12 @@ class XrayControlTest extends TestCase
         $this->assertIsInt($result['config_revision']);
         $this->assertSame('vless-in', $result['managed_inbound']['tag']);
         $this->assertSame('0.0.0.0', $result['managed_inbound']['listen']);
-        $this->postJson($this->path('save'), ['node_id' => $node->id, 'xray_config' => $config, 'expected_revision' => 0])->assertStatus(422);
+        $this->postJson($this->path('save'), [
+            'node_id' => $node->id,
+            'xray_config' => $config,
+            'expected_revision' => 0,
+        ])->assertStatus(422)
+            ->assertJsonPath('errors.expected_revision.0', '配置版本已变化，请重新加载后再保存。');
     }
 
     public function test_vless_parameter_generation_is_admin_only_paired_and_not_cached(): void
@@ -529,6 +534,12 @@ class XrayControlTest extends TestCase
             'expected_revision' => 0,
         ])->assertOk()->json('data');
         $this->assertSame('direct', $saved['effective_config']['outbounds'][0]['tag']);
+        $this->postJson($this->path('bindings'), [
+            'node_id' => $target->id,
+            'outbound_bindings' => [['outbound_id' => $copy['id'], 'tag' => 'remote-edge']],
+            'expected_revision' => 0,
+        ])->assertStatus(422)
+            ->assertJsonPath('errors.expected_revision.0', '配置版本已变化，请重新加载后再修改出站绑定。');
         $this->getJson($this->path('bindings') . '?node_id=' . $target->id)
             ->assertOk()->assertJsonPath('data.default_outbound_tag', 'direct');
         $selected = $this->postJson($this->path('defaultOutbound'), [

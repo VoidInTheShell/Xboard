@@ -1187,6 +1187,27 @@ class XrayControlTest extends TestCase
         $this->assertSame(0, (int) ($node->fresh()->config_revision ?? 0));
     }
 
+    public function test_node_delete_reports_outbound_references_before_removal(): void
+    {
+        $this->admin();
+        $node = $this->node();
+        $outbound = Outbound::create([
+            'name' => 'Referenced node exit',
+            'config' => (object) ['tag' => 'source-exit', 'protocol' => 'freedom', 'settings' => (object) []],
+            'source_type' => Outbound::SOURCE_NODE,
+            'source_node_id' => $node->id,
+        ]);
+
+        $this->postJson($this->manageDropPath(), ['id' => $node->id])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('id');
+        $this->assertDatabaseHas('v2_server', ['id' => $node->id]);
+
+        $outbound->delete();
+        $this->postJson($this->manageDropPath(), ['id' => $node->id])->assertOk();
+        $this->assertDatabaseMissing('v2_server', ['id' => $node->id]);
+    }
+
     private function machinePath(): string
     {
         foreach ($this->app['router']->getRoutes() as $route) {
@@ -1215,5 +1236,15 @@ class XrayControlTest extends TestCase
             }
         }
         $this->fail('Route missing: server update');
+    }
+
+    private function manageDropPath(): string
+    {
+        foreach ($this->app['router']->getRoutes() as $route) {
+            if ($route->getActionName() === \App\Http\Controllers\V2\Admin\Server\ManageController::class . '@drop') {
+                return '/' . $route->uri();
+            }
+        }
+        $this->fail('Route missing: server drop');
     }
 }

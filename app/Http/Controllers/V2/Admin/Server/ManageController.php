@@ -5,6 +5,7 @@ namespace App\Http\Controllers\V2\Admin\Server;
 use App\Exceptions\ApiException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\ServerSave;
+use App\Models\Outbound;
 use App\Models\Server;
 use App\Models\ServerGroup;
 use App\Services\ServerService;
@@ -157,6 +158,18 @@ class ManageController extends Controller
         if (!$server) {
             return $this->fail([400202, '服务器不存在']);
         }
+        $dependentOutbounds = Outbound::query()
+            ->where('source_type', Outbound::SOURCE_NODE)
+            ->where('source_node_id', $server->id)
+            ->orderBy('id')
+            ->pluck('name');
+        if ($dependentOutbounds->isNotEmpty()) {
+            XrayConfigService::failAt(
+                'id',
+                '该节点仍被出站引用：' . $dependentOutbounds->take(3)->implode('、') . '。请先修改或删除这些出站。',
+                null,
+            );
+        }
         if ($server->delete() === false) {
             return $this->fail([500, '删除失败']);
         }
@@ -179,6 +192,19 @@ class ManageController extends Controller
         $ids = $request->input('ids');
         if (empty($ids)) {
             return $this->fail([400, '请选择要删除的节点']);
+        }
+
+        $dependentOutbounds = Outbound::query()
+            ->where('source_type', Outbound::SOURCE_NODE)
+            ->whereIn('source_node_id', $ids)
+            ->orderBy('id')
+            ->pluck('name');
+        if ($dependentOutbounds->isNotEmpty()) {
+            XrayConfigService::failAt(
+                'ids',
+                '所选节点仍被出站引用：' . $dependentOutbounds->take(3)->implode('、') . '。请先修改或删除这些出站。',
+                null,
+            );
         }
 
         try {

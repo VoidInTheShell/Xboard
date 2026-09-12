@@ -420,7 +420,7 @@ jobs:
               if curl --fail --silent --show-error "${url}" > "${destination}" &&
                 grep --fixed-strings '<title>XBoard Admin</title>' "${destination}" > /dev/null &&
                 grep --fixed-strings 'data-xboard-admin-shell="standalone"' "${destination}" > /dev/null &&
-                grep --fixed-strings './assets/' "${destination}" > /dev/null; then
+                grep --fixed-strings '/assets/' "${destination}" > /dev/null; then
                 return 0
               fi
               sleep 2

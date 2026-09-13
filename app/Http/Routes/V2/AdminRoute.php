@@ -31,6 +31,16 @@ class AdminRoute
     public function map(Registrar $router)
     {
         $routes = function (Registrar $router): void {
+            $router->group(['prefix' => 'usage', 'middleware' => 'throttle:60,1'], function ($router) {
+                foreach (['snapshot', 'events', 'leaderboard', 'online', 'infrastructure', 'policy', 'ip', 'settings'] as $action) {
+                    $router->get('/' . $action, [\App\Http\Controllers\V2\Admin\UsageController::class, $action]);
+                }
+                $router->post('/policy/save', [\App\Http\Controllers\V2\Admin\UsageController::class, 'savePolicy']);
+                $router->post('/settings/save', [\App\Http\Controllers\V2\Admin\UsageController::class, 'saveSettings']);
+                $router->post('/review', [\App\Http\Controllers\V2\Admin\UsageController::class, 'review']);
+                // Browsing is an access event, not an admin configuration mutation.
+                $router->post('/visit', [\App\Http\Controllers\V2\Admin\UsageController::class, 'visit'])->withoutMiddleware('log');
+            });
             // Config
             $router->group([
                 'prefix' => 'config'

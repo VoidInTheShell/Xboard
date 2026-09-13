@@ -29,6 +29,7 @@ class AdminOperationCatalog
         'traffic-reset' => 'system',
         'stat' => 'system',
         'mcp' => 'system',
+        'usage' => 'infrastructure',
     ];
 
     private const READ_ACTIONS = [

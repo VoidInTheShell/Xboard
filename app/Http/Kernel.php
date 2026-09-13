@@ -80,6 +80,7 @@ class Kernel extends HttpKernel
         'mcp.auth' => \App\Http\Middleware\McpAuthenticate::class,
         'server' => \App\Http\Middleware\Server::class,
         'server.v2' => \App\Http\Middleware\ServerV2::class,
+        'usage.access' => \App\Http\Middleware\UsageAccess::class,
         'standalone.admin.router' => \App\Http\Middleware\EnsureStandaloneAdminRouter::class,
         'abilities' => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,
         'ability' => \Laravel\Sanctum\Http\Middleware\CheckForAnyAbility::class,

@@ -12,10 +12,12 @@ Every branch push and pull request builds a CI-only image with Composer developm
 - Backend/API and built-in administrator fallback frontend container: `xboard-app`, reachable only on the internal Docker network
 - User frontend and public gateway container: `xboard-theme`, joined to both the internal network and `appnet`
 - Standalone administrator frontend container: `xboard-admin`, reachable only on the internal Docker network
-- Database: persistent SQLite under `data/`, initialized only when missing
+- Database: persistent SQLite under `data/`, initialized only on an empty first installation; a missing database in an existing installation is an error
 - Cache/queue: the image's embedded Redis with a named Compose volume
 
 The first deployment installs SQLite and the deterministic staging baseline. Later deployments preserve `data/`, `.env`, Redis and uploaded runtime state, create a consistent SQLite snapshot under `backups/`, apply forward migrations, and reject any release that reduces protected business-row counts. The shared staging host is not branch-isolated, so the latest successful deployment becomes the current test version. No production host or production database is part of this workflow.
+
+Upgrades do not run the staging bootstrap again: administrator-managed servers, node bindings, users, counters and settings remain intact. Any failed image pull, migration, record guard or container health check restores the previous Compose manifest, image references, runtime credentials and database snapshot. Successful upgrades retain three marked release backups and their image references. Cleanup is limited to the four Xboard image repositories and unused volumes explicitly labelled `io.xboard.ephemeral=true`; persistent volumes and incident backups remain protected.
 
 ## GitHub environment
 

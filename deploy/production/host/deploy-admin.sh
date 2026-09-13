@@ -64,9 +64,19 @@ flock -x 9
 log "acquired production deployment lock"
 
 AUTH_DIR=$(mktemp -d "/tmp/xboard-admin-production-auth.XXXXXX")
+deployment_complete=0
+rollback_ready=0
 cleanup() {
+    local rc=$?
+    trap - EXIT
+    if [ "$rc" -ne 0 ] && [ "$rollback_ready" = 1 ] && [ "$deployment_complete" = 0 ]; then
+        cp -a "$AUTH_DIR/previous.env" "$TARGET_DIR/.deploy.env"
+        docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" up -d --no-deps admin || true
+        docker exec xboard-theme nginx -s reload >/dev/null 2>&1 || true
+    fi
     rm -rf -- "$AUTH_DIR"
     unset REGISTRY_TOKEN
+    exit "$rc"
 }
 trap cleanup EXIT
 
@@ -75,6 +85,8 @@ printf '%s\n' "$REGISTRY_TOKEN" | docker --config "$AUTH_DIR" login ghcr.io --us
 unset REGISTRY_TOKEN
 docker --config "$AUTH_DIR" pull "$ADMIN_IMAGE" >/dev/null 2>&1 || fail "could not pull the standalone Admin version tag"
 
+cp -a "$TARGET_DIR/.deploy.env" "$AUTH_DIR/previous.env"
+rollback_ready=1
 set_env_value "$TARGET_DIR/.deploy.env" "XBOARD_ADMIN_IMAGE" "$ADMIN_IMAGE"
 compose() {
     docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
@@ -90,5 +102,9 @@ docker exec xboard-admin wget -q -O /dev/null http://127.0.0.1/healthz
 docker exec xboard-theme nginx -t >/dev/null
 docker exec xboard-theme nginx -s reload >/dev/null
 docker exec xboard-theme test -s /var/run/xboard-admin-route/active.conf
+deployment_complete=1
+if [ -f "/usr/local/libexec/xboard-ci/assets/release-maintenance.py" ]; then
+    python3 "/usr/local/libexec/xboard-ci/assets/release-maintenance.py" "$TARGET_DIR"
+fi
 log "production standalone Admin deployment complete: $ADMIN_IMAGE"
 compose ps admin

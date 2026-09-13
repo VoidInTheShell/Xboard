@@ -61,6 +61,7 @@ require_file "$RESOLVED_BUNDLE/server_token"
 require_file "$RESOLVED_BUNDLE/test_user_password"
 require_file "$RESOLVED_BUNDLE/admin_route_token"
 require_file "$RESOLVED_BUNDLE/sqlite-data-guard.php"
+require_file "$RESOLVED_BUNDLE/release-maintenance.py"
 
 XBOARD_IMAGE=$(sed -n 's/^XBOARD_IMAGE=//p' "$RESOLVED_BUNDLE/deploy.env" | tail -1)
 DK_THEME_IMAGE=$(sed -n 's/^DK_THEME_IMAGE=//p' "$RESOLVED_BUNDLE/deploy.env" | tail -1)
@@ -79,6 +80,47 @@ log "acquired deployment lock"
 
 had_database=0
 [ ! -f "$TARGET_DIR/data/database.sqlite" ] || had_database=1
+if [ "$had_database" = 0 ] && { [ -s "$TARGET_DIR/.env" ] || [ -f "$TARGET_DIR/compose.yaml" ]; }; then
+    fail "existing installation has no database; refusing to initialize over missing data"
+fi
+timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+release_backup="$TARGET_DIR/backups/release-${timestamp}"
+install -d -m 700 "$release_backup/runtime"
+if [ "$had_database" = 1 ]; then
+    for item in compose.yaml .deploy.env .env secrets bootstrap; do
+        [ ! -e "$TARGET_DIR/$item" ] || sudo -n cp -a "$TARGET_DIR/$item" "$release_backup/runtime/$item"
+    done
+fi
+baseline_database=""
+deployment_complete=0
+AUTH_DIR=""
+ANON_DIR=""
+on_exit() {
+    local rc=$?
+    trap - EXIT
+    if [ "$rc" -ne 0 ] && [ "$had_database" = 1 ] && [ "$deployment_complete" = 0 ]; then
+        log "restoring the previous database and runtime"
+        if [ -n "$baseline_database" ]; then
+            compose stop xboard || true
+            if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php restore "$baseline_database" /www/.docker/.data/database.sqlite; then
+                log "database restore failed; application remains stopped; snapshot retained"
+                exit "$rc"
+            fi
+        fi
+        for item in compose.yaml .deploy.env .env secrets bootstrap; do
+            [ ! -e "$release_backup/runtime/$item" ] || sudo -n cp -a "$release_backup/runtime/$item" "$TARGET_DIR/"
+        done
+        compose up -d xboard admin theme || true
+    fi
+    [ -z "$AUTH_DIR" ] || sudo -n rm -rf -- "$AUTH_DIR"
+    [ -z "$ANON_DIR" ] || sudo -n rm -rf -- "$ANON_DIR"
+    unset REGISTRY_TOKEN
+    exit "$rc"
+}
+compose() {
+    sudo -n docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
+}
+trap on_exit EXIT
 
 sudo -n chown beihai:beihai "$TARGET_DIR"
 install -d -m 700 "$TARGET_DIR/secrets"
@@ -87,10 +129,12 @@ install -d -m 700 "$TARGET_DIR/backups"
 install -m 644 "$RESOLVED_BUNDLE/compose.yaml" "$TARGET_DIR/compose.yaml"
 install -m 600 "$RESOLVED_BUNDLE/deploy.env" "$TARGET_DIR/.deploy.env"
 install -m 644 "$RESOLVED_BUNDLE/sqlite-data-guard.php" "$TARGET_DIR/bootstrap/sqlite-data-guard.php"
-install -m 600 "$RESOLVED_BUNDLE/admin_password" "$TARGET_DIR/secrets/admin_password"
-install -m 600 "$RESOLVED_BUNDLE/server_token" "$TARGET_DIR/secrets/server_token"
-install -m 600 "$RESOLVED_BUNDLE/test_user_password" "$TARGET_DIR/secrets/test_user_password"
-install -m 600 "$RESOLVED_BUNDLE/admin_route_token" "$TARGET_DIR/secrets/admin_route_token"
+install -m 644 "$RESOLVED_BUNDLE/release-maintenance.py" "$TARGET_DIR/release-maintenance.py"
+for secret in admin_password server_token test_user_password admin_route_token; do
+    if [ ! -f "$TARGET_DIR/secrets/$secret" ]; then
+        install -m 600 "$RESOLVED_BUNDLE/$secret" "$TARGET_DIR/secrets/$secret"
+    fi
+done
 # The application worker runs as UID/GID 1000. Docker file secrets preserve
 # this source file's ownership and mode, so expose this token only to that
 # service group; other bootstrap secrets stay private to the host user/root.
@@ -104,11 +148,6 @@ fi
 
 AUTH_DIR=$(mktemp -d "/tmp/xboard-docker-auth.XXXXXX")
 ANON_DIR=$(mktemp -d "/tmp/xboard-docker-anon.XXXXXX")
-cleanup() {
-    sudo -n rm -rf -- "$AUTH_DIR" "$ANON_DIR"
-    unset REGISTRY_TOKEN
-}
-trap cleanup EXIT
 
 printf '%s\n' "$REGISTRY_TOKEN" | sudo -n docker --config "$AUTH_DIR" login ghcr.io --username "$REGISTRY_USER" --password-stdin >/dev/null 2>&1 \
     || fail "registry authentication failed"
@@ -125,22 +164,16 @@ compose() {
     sudo -n docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
 }
 
-baseline_database=""
 if [ "$had_database" = 1 ]; then
     log "preserving the existing staging database"
-    compose stop xboard || true
-    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-    release_backup="$TARGET_DIR/backups/release-${timestamp}"
-    install -d -m 700 "$release_backup"
-    baseline_database="/backups/release-${timestamp}/database.sqlite"
-    if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php snapshot /www/.docker/.data/database.sqlite "$baseline_database"; then
-        compose up -d xboard || true
+    compose stop xboard
+    snapshot_path="/backups/release-${timestamp}/database.sqlite"
+    if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php snapshot /www/.docker/.data/database.sqlite "$snapshot_path"; then
         fail "could not create a consistent staging database snapshot"
     fi
+    baseline_database="$snapshot_path"
     if ! compose run --rm --no-deps bootstrap php artisan migrate --force; then
-        compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php restore "$baseline_database" /www/.docker/.data/database.sqlite || true
-        compose up -d xboard || true
-        fail "staging migration failed; the pre-deploy database was restored"
+        fail "staging migration failed; rolling back"
     fi
 else
     log "installing the initial SQLite staging database"
@@ -163,9 +196,7 @@ fi
 
 if [ "$had_database" = 1 ]; then
     if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php assert-not-decreased "$baseline_database" /www/.docker/.data/database.sqlite; then
-        compose stop xboard || true
-        compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php restore "$baseline_database" /www/.docker/.data/database.sqlite || true
-        fail "protected staging business records decreased; the pre-deploy database was restored"
+        fail "protected staging business records decreased; rolling back"
     fi
 fi
 
@@ -194,7 +225,9 @@ sudo -n docker exec xboard-app wget -q -O /dev/null http://127.0.0.1:7001/
 sudo -n docker exec xboard-admin wget -q -O /dev/null http://127.0.0.1/healthz
 sudo -n docker exec xboard-theme wget -q -O /dev/null http://127.0.0.1/healthz
 sudo -n docker exec xboard-theme test -s /var/run/xboard-admin-route/active.conf
-sudo -n docker image prune -f >/dev/null
+deployment_complete=1
+touch "$release_backup/success"
+sudo -n python3 "$TARGET_DIR/release-maintenance.py" "$TARGET_DIR"
 
 log "deployment complete"
 compose ps

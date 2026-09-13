@@ -74,6 +74,17 @@ is_tagged_ghcr_image() {
 
 [ "$(id -u)" = "0" ] || fail "this trusted deployment script must run as root"
 [[ "$GIT_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "the release SHA is invalid"
+[ "$(realpath -m "$TARGET_DIR")" = "$EXPECTED_TARGET" ] || fail "unexpected production target"
+install -o root -g root -d -m 750 "$TARGET_DIR" "$TARGET_DIR/backups"
+exec 9>"$TARGET_DIR/.deploy.lock"
+flock -x 9
+log "acquired production deployment lock"
+if [ "$REQUESTED_THEME_IMAGE" = current ]; then
+    REQUESTED_THEME_IMAGE=$(sed -n 's/^DK_THEME_IMAGE=//p' "$TARGET_DIR/.deploy.env" | tail -1)
+fi
+if [ "$REQUESTED_ADMIN_IMAGE" = current ]; then
+    REQUESTED_ADMIN_IMAGE=$(sed -n 's/^XBOARD_ADMIN_IMAGE=//p' "$TARGET_DIR/.deploy.env" | tail -1)
+fi
 is_tagged_ghcr_image "$XBOARD_IMAGE" xboard || fail "the Xboard image must use a version tag"
 is_tagged_ghcr_image "$REQUESTED_THEME_IMAGE" dk_theme || fail "the Theme image must use a version tag"
 is_tagged_ghcr_image "$REQUESTED_ADMIN_IMAGE" xboard-admin || fail "the Xboard Admin image must use a version tag"
@@ -87,7 +98,7 @@ CURRENT_XBOARD_SHA=$(branch_sha "$XBOARD_REPOSITORY" master)
 [ "$GIT_SHA" = "$CURRENT_XBOARD_SHA" ] || fail "release SHA is not the current Xboard master"
 
 [ "$(realpath -m "$TARGET_DIR")" = "$EXPECTED_TARGET" ] || fail "unexpected production target"
-for file in compose.yaml production-bootstrap.php sqlite-data-guard.php xboard-mcp.conf apply-mcp-compat.sh; do
+for file in compose.yaml production-bootstrap.php sqlite-data-guard.php release-maintenance.py xboard-mcp.conf apply-mcp-compat.sh; do
     require_file "$ASSET_DIR/$file"
 done
 for secret in admin_password server_token test_user_password admin_route_token; do
@@ -98,10 +109,40 @@ done
 IFS= read -r REGISTRY_TOKEN || true
 [ -n "${REGISTRY_TOKEN:-}" ] || fail "registry token was not provided on stdin"
 
+compose() {
+    docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
+}
+
+restore_previous_runtime_files() {
+    for item in compose.yaml .deploy.env deploy.sh .env secrets bootstrap; do
+        [ ! -e "$release_backup/$item" ] || cp -a "$release_backup/$item" "$TARGET_DIR/"
+    done
+}
+
 AUTH_DIR=$(mktemp -d "/tmp/xboard-production-auth.XXXXXX")
+rollback_ready=0
+deployment_complete=0
+database_backup=""
 cleanup() {
+    local rc=$?
+    trap - EXIT
+    if [ "$rc" -ne 0 ] && [ "$rollback_ready" = 1 ] && [ "$deployment_complete" = 0 ] && [ "$RESET_MODE" = preserve ]; then
+        log "deployment failed; restoring previous production runtime"
+        compose stop xboard || true
+        if [ -n "$database_backup" ]; then
+            if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php restore "$database_backup" /www/.docker/.data/database.sqlite; then
+                log "database restore failed; application remains stopped; snapshot retained"
+                rm -rf -- "$AUTH_DIR"
+                exit "$rc"
+            fi
+        fi
+        restore_previous_runtime_files
+        compose up -d xboard admin theme || true
+        docker exec "$BUNKERWEB" nginx -s reload >/dev/null 2>&1 || true
+    fi
     rm -rf -- "$AUTH_DIR"
     unset REGISTRY_TOKEN
+    exit "$rc"
 }
 trap cleanup EXIT
 printf '%s\n' "$REGISTRY_TOKEN" | docker --config "$AUTH_DIR" login ghcr.io --username "$REGISTRY_USER" --password-stdin >/dev/null 2>&1 \
@@ -113,17 +154,13 @@ docker --config "$AUTH_DIR" pull "$XBOARD_IMAGE" >/dev/null 2>&1 || fail "could 
 docker --config "$AUTH_DIR" pull "$REQUESTED_THEME_IMAGE" >/dev/null 2>&1 || fail "could not pull the Theme version tag"
 docker --config "$AUTH_DIR" pull "$REQUESTED_ADMIN_IMAGE" >/dev/null 2>&1 || fail "could not pull the standalone Admin version tag"
 
-install -o root -g root -d -m 750 "$TARGET_DIR" "$TARGET_DIR/backups"
-exec 9>"$TARGET_DIR/.deploy.lock"
-flock -x 9
-log "acquired production deployment lock"
-
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 release_backup="$TARGET_DIR/backups/release-${timestamp}"
 install -o root -g root -d -m 700 "$release_backup"
-for item in compose.yaml .deploy.env deploy.sh; do
+for item in compose.yaml .deploy.env deploy.sh .env secrets bootstrap; do
     [ ! -e "$TARGET_DIR/$item" ] || cp -a "$TARGET_DIR/$item" "$release_backup/$item"
 done
+rollback_ready=1
 
 install -o root -g root -d -m 700 "$TARGET_DIR/secrets" "$TARGET_DIR/bootstrap" "$TARGET_DIR/runtime-secrets" "$TARGET_DIR/bunkerweb"
 install -o root -g root -m 644 "$ASSET_DIR/compose.yaml" "$TARGET_DIR/compose.yaml"
@@ -155,23 +192,6 @@ XBOARD_ADMIN_IMAGE="$REQUESTED_ADMIN_IMAGE"
 } > "$TARGET_DIR/.deploy.env"
 chmod 600 "$TARGET_DIR/.deploy.env"
 
-compose() {
-    docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
-}
-
-restore_previous_runtime_files() {
-    for item in compose.yaml .deploy.env deploy.sh; do
-        [ ! -f "$release_backup/$item" ] || cp -a "$release_backup/$item" "$TARGET_DIR/$item"
-    done
-}
-
-rollback_preserve_deployment() {
-    local database_backup="$1"
-    compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php restore "$database_backup" /www/.docker/.data/database.sqlite || true
-    restore_previous_runtime_files
-    compose up -d xboard || true
-}
-
 if [ "$RESET_MODE" = "reset" ]; then
     log "performing the separately armed fresh-data deployment"
     compose down --remove-orphans || true
@@ -199,20 +219,17 @@ else
     require_file "$TARGET_DIR/.env"
     require_file "$TARGET_DIR/data/database.sqlite"
     log "preserving production data and applying forward migrations"
-    compose stop xboard || true
-    database_backup="/backups/release-${timestamp}/database.sqlite"
-    if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php snapshot /www/.docker/.data/database.sqlite "$database_backup"; then
-        restore_previous_runtime_files
-        compose up -d xboard || true
+    compose stop xboard
+    snapshot_path="/backups/release-${timestamp}/database.sqlite"
+    if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php snapshot /www/.docker/.data/database.sqlite "$snapshot_path"; then
         fail "could not create a consistent production database snapshot"
     fi
+    database_backup="$snapshot_path"
     if ! compose run --rm --no-deps bootstrap php artisan migrate --force; then
-        rollback_preserve_deployment "$database_backup"
-        fail "production migration failed; the pre-deploy database and runtime files were restored"
+        fail "production migration failed; rolling back"
     fi
     if ! compose run --rm --no-deps bootstrap php /bootstrap/sqlite-data-guard.php assert-not-decreased "$database_backup" /www/.docker/.data/database.sqlite; then
-        rollback_preserve_deployment "$database_backup"
-        fail "protected production business records decreased; the pre-deploy database and runtime files were restored"
+        fail "protected production business records decreased; rolling back"
     fi
     compose up -d xboard
 fi
@@ -243,6 +260,9 @@ docker exec xboard-theme wget -q -O /dev/null http://127.0.0.1/healthz
 docker exec xboard-theme test -s /var/run/xboard-admin-route/active.conf
 "$TARGET_DIR/bunkerweb/apply-mcp-compat.sh" "$TARGET_DIR/bunkerweb/xboard-mcp.conf"
 refresh_bunkerweb_upstream
+deployment_complete=1
+touch "$release_backup/success"
+python3 "$ASSET_DIR/release-maintenance.py" "$TARGET_DIR"
 
 log "production deployment complete"
 compose ps

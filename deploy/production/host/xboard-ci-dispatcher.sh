@@ -62,8 +62,8 @@ case "${ARGS[0]}" in
         [ "${#ARGS[@]}" -eq 8 ] || fail "deploy-xboard arguments are invalid"
         validate_sha "${ARGS[1]}"
         validate_image_tag xboard "${ARGS[2]}"
-        validate_image_tag dk_theme "${ARGS[3]}"
-        validate_image_tag xboard-admin "${ARGS[4]}"
+        [ "${ARGS[3]}" = current ] || validate_image_tag dk_theme "${ARGS[3]}"
+        [ "${ARGS[4]}" = current ] || validate_image_tag xboard-admin "${ARGS[4]}"
         validate_actor "${ARGS[5]}"
         case "${ARGS[6]}:${ARGS[7]}" in
             preserve:NO_RESET)

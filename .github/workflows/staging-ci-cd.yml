@@ -72,9 +72,9 @@ jobs:
           context: .
           load: true
           push: false
-          tags: xboard-ci:${{ github.sha }}
+          tags: xboard-ci:build-${{ github.run_id }}-${{ github.run_attempt }}
           build-args: |
-            APP_VERSION=${{ github.sha }}
+            APP_VERSION=build-${{ github.run_id }}-${{ github.run_attempt }}
             INSTALL_DEV_DEPENDENCIES=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -209,7 +209,6 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=build-${{ github.run_id }}-${{ github.run_attempt }}
-            type=sha,format=long,prefix=sha-
             type=ref,event=branch
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
           labels: |
@@ -226,7 +225,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            APP_VERSION=${{ github.sha }}
+            APP_VERSION=build-${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: true
@@ -359,6 +358,7 @@ jobs:
           install -m 644 deploy/staging/compose.yaml "${BUNDLE_DIR}/compose.yaml"
           install -m 700 deploy/staging/deploy.sh "${BUNDLE_DIR}/deploy.sh"
           install -m 644 deploy/shared/sqlite-data-guard.php "${BUNDLE_DIR}/sqlite-data-guard.php"
+          install -m 644 deploy/shared/release-maintenance.py "${BUNDLE_DIR}/release-maintenance.py"
           printf '%s' "${ADMIN_PASSWORD}" > "${BUNDLE_DIR}/admin_password"
           printf '%s' "${SERVER_TOKEN}" > "${BUNDLE_DIR}/server_token"
           printf '%s' "${TEST_USER_PASSWORD}" > "${BUNDLE_DIR}/test_user_password"
@@ -515,8 +515,8 @@ jobs:
     name: Deploy JPGREEN production
     if: >-
       github.ref == 'refs/heads/master' &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.deployment_target == 'production'
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.deployment_target == 'production'))
     needs: build-and-push
     runs-on: ubuntu-latest
     concurrency:
@@ -538,8 +538,8 @@ jobs:
       SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       XBOARD_IMAGE: ghcr.io/voidintheshell/xboard:${{ needs.build-and-push.outputs.image_tag }}
-      DK_THEME_IMAGE: ${{ inputs.production_dk_theme_image || vars.PRODUCTION_DK_THEME_IMAGE }}
-      XBOARD_ADMIN_IMAGE: ${{ inputs.production_xboard_admin_image || vars.PRODUCTION_XBOARD_ADMIN_IMAGE }}
+      DK_THEME_IMAGE: ${{ inputs.production_dk_theme_image || 'current' }}
+      XBOARD_ADMIN_IMAGE: ${{ inputs.production_xboard_admin_image || 'current' }}
       RESET_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.reset_jpgreen_data && 'reset' || 'preserve' }}
       RESET_CONFIRMATION: ${{ inputs.reset_confirmation || '' }}
     steps:
@@ -560,8 +560,8 @@ jobs:
           test "${ADMIN_PATH}" = 'unitedearthgov'
           test "${SSH_USER}" = 'xboard-ci'
           [[ "${XBOARD_IMAGE}" =~ ^ghcr\.io/voidintheshell/xboard:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
-          [[ "${DK_THEME_IMAGE}" =~ ^ghcr\.io/voidintheshell/dk_theme:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
-          [[ "${XBOARD_ADMIN_IMAGE}" =~ ^ghcr\.io/voidintheshell/xboard-admin:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
+          [[ "${DK_THEME_IMAGE}" = current || "${DK_THEME_IMAGE}" =~ ^ghcr\.io/voidintheshell/dk_theme:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
+          [[ "${XBOARD_ADMIN_IMAGE}" = current || "${XBOARD_ADMIN_IMAGE}" =~ ^ghcr\.io/voidintheshell/xboard-admin:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
           if [ "${RESET_MODE}" = 'reset' ]; then
             test "${RESET_CONFIRMATION}" = 'RESET JPGREEN XBOARD DATA'
           else

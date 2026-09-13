@@ -11,9 +11,17 @@ x-xboard-volumes: &xboard-volumes
   - ./bootstrap:/bootstrap:ro
   - ./backups:/backups
 
+# Container output is separate from the mounted panel log budget.
+x-container-logging: &container-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   xboard:
     image: ${XBOARD_IMAGE:?XBOARD_IMAGE is required}
+    logging: *container-logging
     container_name: xboard-app
     restart: unless-stopped
     init: true
@@ -47,6 +55,7 @@ services:
 
   bootstrap:
     image: ${XBOARD_IMAGE:?XBOARD_IMAGE is required}
+    logging: *container-logging
     profiles: ["bootstrap"]
     restart: "no"
     init: true
@@ -80,6 +89,7 @@ services:
 
   theme:
     image: ${DK_THEME_IMAGE:?DK_THEME_IMAGE is required}
+    logging: *container-logging
     container_name: xboard-theme
     restart: unless-stopped
     depends_on:
@@ -116,6 +126,7 @@ services:
 
   admin:
     image: ${XBOARD_ADMIN_IMAGE:?XBOARD_ADMIN_IMAGE is required}
+    logging: *container-logging
     container_name: xboard-admin
     restart: unless-stopped
     init: true

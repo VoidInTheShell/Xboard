@@ -24,8 +24,12 @@ Xboard is a modern panel system built on Laravel 11, focusing on providing a cle
 ## 🚀 Quick Start
 
 ```bash
-git clone -b compose --depth 1 https://github.com/cedar2025/Xboard && \
-cd Xboard && \
+git clone -b dev --depth 1 https://github.com/VoidInTheShell/Xboard
+cd Xboard
+cp compose.sample.yaml compose.yaml
+read -r -p 'Published Xboard version tag (build-<run>-<attempt> or release tag): ' XBOARD_VERSION
+export XBOARD_VERSION
+printf 'XBOARD_VERSION=%s\n' "$XBOARD_VERSION" > .env
 docker compose run -it --rm \
     -e ENABLE_SQLITE=true \
     -e ENABLE_REDIS=true \
@@ -33,6 +37,14 @@ docker compose run -it --rm \
     xboard php artisan xboard:install && \
 docker compose up -d
 ```
+
+The samples use `ghcr.io/voidintheshell/xboard` and require an explicitly selected
+published version tag. Copy it from this repository's successful publish job;
+`latest` is not selected automatically. The full three-container deployment uses
+`ghcr.io/voidintheshell/xboard-admin` and `ghcr.io/voidintheshell/dk_theme` alongside
+the panel image; see [staging](deploy/staging/README.md) and
+[production](deploy/production/README.md). Container stdout rotates at 10 MB × 3
+files per container; mounted panel logs have a separate budget.
 
 > After installation, visit: http://SERVER_IP:7001  
 > ⚠️ Make sure to save the admin credentials shown during installation
@@ -103,8 +115,8 @@ Apply database migrations before enabling `USAGE_ENABLED=true`, or use the
 authenticated admin/MCP `usage/settings/save` operation. Its settings are
 `enabled`, `history_days`, `access_days`, and `identity_days` (retention: 7–730
 days). Saved settings override the environment defaults. Run the normal Laravel
-scheduler: `usage:maintain` aggregates online peaks; its scheduled `--prune` run
-removes expired observations in bounded batches. No billing counters are reset
+scheduler: `usage:maintain` aggregates online peaks; `logs:maintain` applies the
+configured retention and storage budgets in bounded batches. No billing counters are reset
 or incremented by the observation ledger.
 
 The user API (`/api/v1/user/usage`) and admin API (`/api/v2/{admin-path}/usage`)

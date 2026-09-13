@@ -104,14 +104,8 @@ class MachineController extends Controller
             $historyData['net_out_speed'] = (float) $netOutSpeed;
         }
 
-        ServerMachineLoadHistory::create($historyData);
-
-        // Time-based cleanup: keep 24h of data, runs on ~5% of requests
-        if (random_int(1, 20) === 1) {
-            ServerMachineLoadHistory::query()
-                ->where('machine_id', $machine->id)
-                ->where('recorded_at', '<', now()->subDay()->timestamp)
-                ->delete();
+        if (\App\Services\Logs\LogSettings::enabled('load') && \App\Services\Logs\LogBudget::accepts()) {
+            ServerMachineLoadHistory::create($historyData);
         }
 
         return response()->json(['data' => true]);

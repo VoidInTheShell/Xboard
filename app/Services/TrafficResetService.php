@@ -194,8 +194,9 @@ class TrafficResetService
   /**
    * Record the traffic reset log.
    */
-  private function recordResetLog(User $user, array $data): void
-  {
+    private function recordResetLog(User $user, array $data): void
+    {
+      if (!\App\Services\Logs\LogSettings::enabled('reset') || !\App\Services\Logs\LogBudget::accepts()) return;
     TrafficResetLog::create([
       'user_id' => $user->id,
       'reset_type' => $data['reset_type'],

@@ -253,7 +253,7 @@ class ServerService
             }
             $report = array_filter($report, static fn ($value) => $value !== null);
             $report['reported_at'] = now()->timestamp;
-            Cache::put("xray_config_apply:{$node->id}", $report, 86400);
+            Cache::put("xray_config_apply:{$node->id}", $report, \App\Services\Logs\LogSettings::get()['appliedHours'] * 3600);
             // Keep the last real node acknowledgement with the desired
             // configuration. This is intentionally a narrow allow-list, so
             // metrics or credentials cannot become part of the application

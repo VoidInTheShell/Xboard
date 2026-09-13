@@ -10,6 +10,7 @@ class UsageAccessService
     public function record(Request $request, int $userId, string $kind, string $action, string $result, string $path = ''): void
     {
         if (!\App\Services\Usage\UsageSettings::get('enabled')) return;
+        if (!\App\Services\Logs\LogSettings::enabled($kind === 'subscription' ? 'subscription' : 'web') || !\App\Services\Logs\LogBudget::accepts(2048)) return;
         $ua = mb_substr((string) $request->userAgent(), 0, 512);
         // Do not persist URL queries, Authorization, subscription tokens or body.
         DB::table('v2_usage_event')->insert([

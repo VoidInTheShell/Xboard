@@ -101,17 +101,19 @@ class SystemController extends Controller
     public function getAuditLog(Request $request)
     {
         $current = max(1, (int) $request->input('current', 1));
-        $pageSize = max(10, (int) $request->input('page_size', 10));
+        $pageSize = min(100, max(10, (int) $request->input('page_size', 10)));
 
         $builder = AdminAuditLog::with([
                 'admin:id,email',
                 'mcpKey:id,name,token_suffix',
             ])
             ->orderBy('id', 'DESC')
-            ->when($request->input('action'), fn($q, $v) => $q->where('action', $v))
+            ->when($request->input('action'), fn($q, $v) => $q->whereIn('action',[$v,$v.'.get',$v.'.post']))
             ->when($request->input('admin_id'), fn($q, $v) => $q->where('admin_id', $v))
             ->when($request->input('actor_type'), fn($q, $v) => $q->where('actor_type', $v))
             ->when($request->input('mcp_key_id'), fn($q, $v) => $q->where('mcp_key_id', $v))
+            ->when($request->input('from'), fn($q,$v)=>$q->where('created_at','>=',(int)$v))
+            ->when($request->input('to'), fn($q,$v)=>$q->where('created_at','<=',(int)$v))
             ->when($request->input('keyword'), function ($q, $keyword) {
                 $q->where(function ($q) use ($keyword) {
                     $q->where('uri', 'like', '%' . $keyword . '%')

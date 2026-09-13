@@ -26,6 +26,15 @@ class UsageController extends \App\Http\Controllers\V1\User\UsageController
             'access_days' => 'required|integer|min:7|max:730', 'identity_days' => 'required|integer|min:7|max:730']);
         abort_unless(\Illuminate\Support\Facades\Schema::hasTable('v2_usage_ip_traffic'), 409, 'Apply usage migrations before enabling collection');
         DB::transaction(function () use ($data) {
+            $policy=\App\Services\Logs\LogSettings::get(true);
+            $policy['usageEnabled']=(bool)$data['enabled'];
+            foreach ($policy['policies'] as &$p) {
+                if (in_array($p['id'],['traffic','nic','ip','online'],true)) $p['days']=$data['history_days'];
+                if (in_array($p['id'],['web','subscription'],true)) $p['days']=$data['access_days'];
+                if ($p['id']==='source') $p['days']=$data['identity_days'];
+            }
+            unset($p);
+            \App\Services\Logs\LogSettings::save($policy);
             foreach ($data as $key => $value) \App\Models\Setting::createOrUpdate('usage_' . $key, $value);
             // MCP may wrap this in its own transaction. Invalidate only once
             // the outer transaction commits; never cache uncommitted values.
@@ -52,6 +61,9 @@ class UsageController extends \App\Http\Controllers\V1\User\UsageController
             ->select('layer', 'machine_id', 'node_id', 'resource')->selectRaw("$bucket as bucket, SUM(up) as up, SUM(down) as down")
             ->groupByRaw("layer, machine_id, node_id, resource, $bucket")->orderBy('bucket')->limit(10001)->get();
         abort_if($rows->count() > 10000, 422, 'Narrow the date or machine scope');
+        foreach (app(\App\Services\Logs\LogArchive::class)->query($scope,$from-($from+28800)%86400,$to) as $row) {
+            if (in_array($row['layer'],['nic','instance'],true)) $rows->push((object)($row+['resource'=>'每日汇总']));
+        }
         return $this->success($rows->map(fn($r) => [
             'at' => max($from, (int) $r->bucket) * 1000, 'serverId' => (string) $r->machine_id, 'nodeId' => (string) $r->node_id,
             'resourceId' => $r->machine_id . ':' . $r->resource, 'name' => $r->resource,

@@ -60,6 +60,7 @@ class UsageIpIngestService
                 default => "$column + $incoming",
             });
         }
+        if (!\App\Services\Logs\LogSettings::enabled('ip') || !\App\Services\Logs\LogBudget::accepts(count($traffic)*512)) return;
         foreach (array_chunk($traffic, 50) as $chunk) DB::table('v2_usage_ip_traffic')->upsert($chunk,
             ['user_id', 'ip', 'node_id', 'machine_id', 'bucket'], $updates);
     }

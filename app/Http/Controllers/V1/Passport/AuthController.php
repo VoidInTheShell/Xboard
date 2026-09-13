@@ -45,6 +45,10 @@ class AuthController extends Controller
         );
 
         if (!$success) {
+            if (\App\Services\Logs\LogSettings::get()['auditLogin']) {
+                $actor=\App\Models\User::byEmail($email)->where('is_admin',true)->first();
+                if ($actor) \App\Services\Logs\AuditWriter::attempt($request,'auth.login',(int)($result[0]??400),$actor);
+            }
             return $this->fail($result);
         }
 

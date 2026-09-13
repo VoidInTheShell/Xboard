@@ -62,6 +62,14 @@ class UsageQueryService
         if (!empty($scope['user_id'])) $trafficQuery->selectRaw('user_id')->groupBy('user_id');
         else $trafficQuery->selectRaw('0 as user_id');
         $traffic = $trafficQuery->orderBy('bucket')->limit(10001)->get();
+        $retained = collect(app(\App\Services\Logs\LogArchive::class)->query($scope,$from-($from+28800)%86400,$to))
+            ->where('layer','proxy')->values();
+        foreach ($retained as $row) {
+            $traffic->push((object)array_replace($row,['user_id'=>!empty($scope['user_id'])?$row['user_id']:0]));
+        }
+        $traffic = $traffic->groupBy(fn($r)=>$r->bucket.':'.$r->node_id.':'.$r->machine_id.':'.$r->user_id)
+            ->map(function ($rows) { $row=clone $rows->first(); foreach (['up','down','billed_up','billed_down'] as $key) $row->$key=$rows->sum($key); return $row; })
+            ->sortBy('bucket')->values();
         // Never silently return a partial total.
         abort_if($traffic->count() > 10000, 422, 'Select a shorter range or narrower user/node scope');
         $online = $this->scoped(DB::table('v2_usage_online as o'), $scope, 'o.')
@@ -87,7 +95,8 @@ class UsageQueryService
         }
         $nodes = Server::query();
         if (!$admin) {
-            $nodes->whereIn('id', DB::table('v2_usage_traffic')->where('user_id', $scope['user_id'])->select('node_id')->distinct());
+            $nodes->where(fn($q)=>$q->whereIn('id', DB::table('v2_usage_traffic')->where('user_id', $scope['user_id'])->select('node_id')->distinct())
+                ->orWhereIn('id',$retained->pluck('node_id')->unique()));
         }
         $subscriptionQuery = DB::table('v2_usage_event')->where('kind', 'subscription')->whereBetween('recorded_at', [$from, $to]);
         if (!empty($scope['user_id'])) $subscriptionQuery->where('user_id', $scope['user_id']);
@@ -102,9 +111,12 @@ class UsageQueryService
         foreach (['user' => ['user_id', 'v2_user', 'email'], 'node' => ['node_id', 'v2_server', 'name'], 'server' => ['machine_id', 'v2_server_machine', 'name']] as $kind => [$column, $table, $label]) {
             if (!$admin && $kind !== 'node') continue;
             $totals = (clone $rankingBase)->select("t.$column as id")->selectRaw('SUM(t.up + t.down) as value')->groupBy("t.$column");
-            $ranks[$kind] = DB::query()->fromSub($totals, 'totals')->leftJoin("$table as subject", 'subject.id', '=', 'totals.id')
-                ->select('totals.id', 'totals.value', "subject.$label as name")->orderByDesc('value')->orderBy('totals.id')->limit(6)
-                ->get()->map(fn($r) => ['name' => $r->name ?? '#' . $r->id, 'value' => $r->value / 1073741824])->all();
+            $values=$totals->limit(10001)->get()->keyBy('id')->map(fn($r)=>(int)$r->value);
+            abort_if($values->count()>10000,422,'Narrow the ranking scope');
+            foreach ($retained as $row) $values[$row[$column]]=($values[$row[$column]]??0)+$row['up']+$row['down'];
+            $top=$values->sortDesc()->take(6);
+            $names=DB::table($table)->whereIn('id',$top->keys())->pluck($label,'id');
+            $ranks[$kind]=$top->map(fn($value,$id)=>['name'=>$names[$id]??'#'.$id,'value'=>$value/1073741824])->values()->all();
         }
         $security = app(UsageSecurityService::class)->snapshot($scope, $from, $to, $admin, $actor);
         return [
@@ -138,10 +150,11 @@ class UsageQueryService
                 'server' => '',
             ])->all(),
             'users' => $admin ? User::query()->whereIn('id', (clone $rankingBase)->select('t.user_id')->distinct())
-                ->orWhereIn('id', $online->pluck('user_id'))->select('id', 'email')->limit(2000)->get() : [],
+                ->orWhereIn('id', $online->pluck('user_id'))->orWhereIn('id',$retained->pluck('user_id'))->select('id', 'email')->limit(2000)->get() : [],
             ...$security,
             'coverage' => ['traffic_granularity' => $grain === 3600 ? 'hour' : 'day', 'device_traffic' => false,
-                'identity' => 'ip', 'history_days' => \App\Services\Usage\UsageSettings::get('history_days')],
+                'identity' => 'ip', 'history_days' => \App\Services\Usage\UsageSettings::get('history_days'),
+                'retained_daily' => $retained->isNotEmpty()],
         ];
     }
 

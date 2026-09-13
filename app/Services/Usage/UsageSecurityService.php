@@ -30,6 +30,7 @@ class UsageSecurityService
 
     public function review(int $actor, bool $admin, string $signal): void
     {
+        abort_unless(\App\Services\Logs\LogSettings::enabled('review') && \App\Services\Logs\LogBudget::accepts(), 409, '安全核查记录已关闭或日志存储预算已满。');
         [$kind, $id] = array_pad(explode(':', $signal, 2), 2, '');
         abort_unless(in_array($kind, ['connection', 'panel', 'subscription'], true) && ctype_digit($id), 422, 'Invalid signal');
         $query = DB::table($kind === 'connection' ? 'v2_usage_source' : 'v2_usage_event')->where('id', $id);

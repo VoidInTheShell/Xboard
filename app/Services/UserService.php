@@ -126,8 +126,10 @@ class UserService
         $timestamp = strtotime(date('Y-m-d'));
         collect($data)->chunk(1000)->each(function ($chunk) use ($timestamp, $server, $protocol) {
             TrafficFetchJob::dispatch($server, $chunk->toArray(), $protocol, $timestamp);
-            StatUserJob::dispatch($server, $chunk->toArray(), $protocol, 'd');
-            StatServerJob::dispatch($server, $chunk->toArray(), $protocol, 'd');
+            if (\App\Services\Logs\LogSettings::enabled('legacy')) {
+                StatUserJob::dispatch($server, $chunk->toArray(), $protocol, 'd');
+                StatServerJob::dispatch($server, $chunk->toArray(), $protocol, 'd');
+            }
         });
     }
 

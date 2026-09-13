@@ -15,25 +15,31 @@ return [
         ],
 
         'backup' => [
-            'driver' => 'single',
-            'path' => storage_path('logs/backup.log'),
+            'driver' => 'monolog',
+            'handler' => \App\Services\Logs\PanelLogHandler::class,
+            'with' => ['category' => 'backup'],
+            'path' => storage_path('logs/managed-backup.log'),
             'level' => 'debug',
         ],
 
         'single' => [
-            'driver' => 'single',
-            'path' => storage_path('logs/laravel.log'),
-            'level' => env('LOG_LEVEL', 'debug'),
+            'driver' => 'monolog',
+            'handler' => \App\Services\Logs\PanelLogHandler::class,
+            'with' => ['category' => 'app'],
+            'path' => storage_path('logs/managed-app.log'),
+            'level' => 'debug',
         ],
 
         'daily' => [
-            'driver' => 'daily',
-            'path' => storage_path('logs/laravel.log'),
-            'level' => env('LOG_LEVEL', 'debug'),
-            'days' => 14,
+            'driver' => 'monolog',
+            'handler' => \App\Services\Logs\PanelLogHandler::class,
+            'with' => ['category' => 'app'],
+            'path' => storage_path('logs/managed-app.log'),
+            'level' => 'debug',
         ],
 
         'stderr' => [
+            'tap' => [\App\Services\Logs\LogPolicyTap::class],
             'driver' => 'monolog',
             'level' => env('LOG_LEVEL', 'debug'),
             'handler' => StreamHandler::class,
@@ -44,20 +50,23 @@ return [
         ],
 
         'syslog' => [
+            'tap' => [\App\Services\Logs\LogPolicyTap::class],
             'driver' => 'syslog',
             'level' => env('LOG_LEVEL', 'debug'),
         ],
 
         'errorlog' => [
+            'tap' => [\App\Services\Logs\LogPolicyTap::class],
             'driver' => 'errorlog',
             'level' => env('LOG_LEVEL', 'debug'),
         ],
 
         'deprecations' => [
-            'driver' => 'daily',
-            'path' => storage_path('logs/deprecations.log'),
+            'driver' => 'monolog',
+            'handler' => \App\Services\Logs\PanelLogHandler::class,
+            'with' => ['category' => 'deprecation'],
+            'path' => storage_path('logs/managed-deprecation.log'),
             'level' => 'debug',
-            'days' => 14,
         ],
     ],
 

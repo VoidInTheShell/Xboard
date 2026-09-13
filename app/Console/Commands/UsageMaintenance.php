@@ -12,7 +12,10 @@ class UsageMaintenance extends Command
 
     public function handle(): int
     {
+        $this->prune('v2_usage_online', 'sampled_at', time() - 600);
+        if ($this->option('prune')) return $this->call('logs:maintain');
         if (!\App\Services\Usage\UsageSettings::get('enabled')) return self::SUCCESS;
+        if (!\App\Services\Logs\LogSettings::enabled('online') || !\App\Services\Logs\LogBudget::accepts()) return self::SUCCESS;
         $now = time();
         $known = app(\App\Services\Usage\UsageQueryService::class)->onlineCounts();
         foreach (['nodes' => 'node', 'machines' => 'machine'] as $key => $scope) {
@@ -65,27 +68,6 @@ class UsageMaintenance extends Command
                 ['user_id', 'node_id', 'machine_id', 'bucket'], $updates);
         }
         $this->prune('v2_usage_online', 'sampled_at', $now - 600);
-        if ($this->option('prune')) {
-            $this->prune('v2_usage_event', 'recorded_at', $now - max(1, \App\Services\Usage\UsageSettings::get('access_days')) * 86400);
-            foreach (['traffic', 'online_history', 'online_scope_history', 'ip_traffic'] as $table) {
-                $this->prune('v2_usage_' . $table, 'bucket', $now - max(1, \App\Services\Usage\UsageSettings::get('history_days')) * 86400);
-            }
-            $this->prune('v2_usage_ip_counter', 'sampled_at', $now - max(1, \App\Services\Usage\UsageSettings::get('history_days')) * 86400);
-            // Sources/identities are kept by last activity; inactive historical ranks
-            // expire only according to their explicit independent retention window.
-            $expired = DB::table('v2_usage_identity')->where('last_seen', '<', $now - max(1, \App\Services\Usage\UsageSettings::get('identity_days')) * 86400)->limit(1000)->pluck('id');
-            DB::transaction(function () use ($expired) {
-                DB::table('v2_usage_source')->whereIn('identity_id', $expired)->delete();
-                DB::table('v2_usage_identity')->whereIn('id', $expired)->delete();
-            });
-            // Retain epoch fences as long as counters: pruning an old process
-            // after one day could allow its delayed reports to become current.
-            $streams = DB::table('v2_usage_stream')->where('sampled_at', '<', $now - max(1, \App\Services\Usage\UsageSettings::get('history_days')) * 86400)->limit(1000)->pluck('id');
-            DB::transaction(function () use ($streams) {
-                DB::table('v2_usage_counter')->whereIn('stream_id', $streams)->delete();
-                DB::table('v2_usage_stream')->whereIn('id', $streams)->delete();
-            });
-        }
         return self::SUCCESS;
     }
 

@@ -52,6 +52,7 @@ class UsageIngestService
             $instanceDown = 0;
             $counterWrites = [];
             $trafficWrites = [];
+            $devicesComplete = false;
             foreach ($rows as $row) {
                 $resource = $scope === 'node' ? 'user:' . $row['user_id'] : $row['interface'];
                 $old = $previous->get($resource);
@@ -82,7 +83,9 @@ class UsageIngestService
                     'bucket' => intdiv($at, 3600) * 3600,
                     'up' => $instanceUp, 'down' => $instanceDown, 'billed_up' => $instanceUp, 'billed_down' => $instanceDown,
                 ];
-                $this->devices($node, $report['devices'] ?? [], $at);
+                if (\App\Services\Logs\LogSettings::enabled('source') || \App\Services\Logs\LogSettings::enabled('online')) {
+                    $devicesComplete = $this->devices($node, $report['devices'] ?? [], $at);
+                }
                 app(UsageIpIngestService::class)->ingest($node, $report['devices'] ?? [], $at);
             }
             foreach (array_chunk($counterWrites, 200) as $chunk) DB::table('v2_usage_counter')->upsert($chunk, ['stream_id', 'resource'], ['up', 'down']);
@@ -91,6 +94,9 @@ class UsageIngestService
                 $incoming = DB::getDriverName() === 'mysql' ? "VALUES($column)" : "excluded.$column";
                 $updates[$column] = DB::raw("$column + $incoming");
             }
+            $trafficWrites = array_values(array_filter($trafficWrites, fn($row) =>
+                \App\Services\Logs\LogSettings::enabled($row['layer'] === 'proxy' ? 'traffic' : 'nic')));
+            if (!\App\Services\Logs\LogBudget::accepts(count($trafficWrites)*512)) $trafficWrites=[];
             foreach (array_chunk($trafficWrites, 100) as $chunk) DB::table('v2_usage_traffic')->upsert(
                 $chunk, ['layer', 'node_id', 'user_id', 'machine_id', 'resource', 'bucket'], $updates
             );
@@ -98,13 +104,14 @@ class UsageIngestService
                 'sequence' => $report['sequence'], 'sampled_at' => $at,
             ]);
             DB::table('v2_usage_head')->where('id', $head->id)->update(['epoch' => $report['epoch'], 'sampled_at' => $at,
-                'devices_complete' => $report['devices_complete'] ?? true]);
+                'devices_complete' => $devicesComplete && ($report['devices_complete'] ?? true)]);
             return true;
         }, 3);
     }
 
-    private function devices(Server $node, array $devices, int $at): void
+    private function devices(Server $node, array $devices, int $at): bool
     {
+        if (!\App\Services\Logs\LogBudget::accepts(count($devices)*1536)) return false;
         $identities = [];
         $normalized = [];
         foreach ($devices as $device) {
@@ -138,7 +145,7 @@ class UsageIngestService
         $sourceRows = DB::table('v2_usage_source')->whereIn('identity_id', $identityIds)->get()->keyBy('identity_id');
         $online = [];
         foreach ($normalized as $key => $device) {
-            if (!($device['online'] ?? true)) continue;
+            if (!\App\Services\Logs\LogSettings::enabled('online') || !($device['online'] ?? true)) continue;
             $identity = $identityRows->get($key);
             $source = $sourceRows->get($identity->id);
             $online[] = ['node_id' => $node->id, 'source_id' => $source->id, 'machine_id' => $node->machine_id ?? 0,
@@ -148,5 +155,6 @@ class UsageIngestService
         foreach (array_chunk($online, 200) as $chunk) DB::table('v2_usage_online')->upsert($chunk, ['node_id', 'source_id'], ['up_speed', 'down_speed', 'sampled_at', 'machine_id']);
         // Complete snapshot: empty explicitly means no devices; historical sources stay.
         DB::table('v2_usage_online')->where('node_id', $node->id)->whereNotIn('source_id', array_column($online, 'source_id'))->delete();
+        return \App\Services\Logs\LogSettings::enabled('online');
     }
 }

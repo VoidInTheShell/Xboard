@@ -91,12 +91,12 @@ jobs:
             --env SESSION_DRIVER=array \
             --env REDIS_HOST=127.0.0.1 \
             --env REDIS_PORT=6379 \
-            xboard-ci:${GITHUB_SHA} \
+            xboard-ci:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} \
             -c 'redis-server --daemonize yes && touch database/testing.sqlite && php vendor/bin/phpunit tests --colors=never --fail-on-empty-test-suite'
 
       - name: Verify Artisan boot and staging command registration
         run: |
-          docker run --rm xboard-ci:${GITHUB_SHA} php artisan list --format=json > /tmp/artisan.json
+          docker run --rm xboard-ci:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} php artisan list --format=json > /tmp/artisan.json
           grep -q 'xboard:staging-bootstrap' /tmp/artisan.json
 
       - name: Validate deployment assets
@@ -111,16 +111,16 @@ jobs:
           docker compose -f deploy/production/compose.yaml config --no-interpolate > /dev/null
           docker run --rm --entrypoint php \
             --volume "${GITHUB_WORKSPACE}/deploy/production/bootstrap/production-bootstrap.php:/tmp/production-bootstrap.php:ro" \
-          xboard-ci:${GITHUB_SHA} -l /tmp/production-bootstrap.php
+          xboard-ci:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} -l /tmp/production-bootstrap.php
           docker run --rm --entrypoint php \
             --volume "${GITHUB_WORKSPACE}/deploy/shared/sqlite-data-guard.php:/tmp/sqlite-data-guard.php:ro" \
-          xboard-ci:${GITHUB_SHA} -l /tmp/sqlite-data-guard.php
+          xboard-ci:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} -l /tmp/sqlite-data-guard.php
           docker run --rm --entrypoint php \
             --volume "${GITHUB_WORKSPACE}/deploy/production/recovery/merge-server-configuration.php:/tmp/merge-server-configuration.php:ro" \
-          xboard-ci:${GITHUB_SHA} -l /tmp/merge-server-configuration.php
+          xboard-ci:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} -l /tmp/merge-server-configuration.php
           docker run --rm --entrypoint php \
             --volume "${GITHUB_WORKSPACE}/deploy:/workspace/deploy:ro" \
-          xboard-ci:${GITHUB_SHA} /workspace/deploy/tests/data-safety.php
+          xboard-ci:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} /workspace/deploy/tests/data-safety.php
           grep -q '^# XBOARD-MCP-COMPAT$' deploy/production/bunkerweb/xboard-mcp.conf
           grep -q '^# XBOARD-NODE-CONTROL-COMPAT$' deploy/production/bunkerweb/xboard-mcp.conf
           grep -Fq 'location ^~ /api/v2/server/' deploy/production/bunkerweb/xboard-mcp.conf
@@ -153,7 +153,7 @@ jobs:
             --env PRODUCTION_TEST_USER_EMAIL=test@validation.invalid \
             --env MCP_KEY_OUTPUT_FILE=/runtime-secrets/xboard_mcp_key \
             --env PRODUCTION_BOOTSTRAP_CONFIRM=1 \
-            xboard-ci:${GITHUB_SHA} -ec '
+            xboard-ci:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} -ec '
               install -m 600 /dev/null /tmp/admin_password
               install -m 600 /dev/null /tmp/test_password
               install -m 600 /dev/null /tmp/server_token

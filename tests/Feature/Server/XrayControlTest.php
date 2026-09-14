@@ -458,6 +458,50 @@ class XrayControlTest extends TestCase
         $this->assertStringContainsString('security=tls', $link);
     }
 
+    public function test_reverse_proxy_tls_is_preserved_for_subscriptions_and_source_outbounds(): void
+    {
+        $this->admin();
+        $source = $this->node();
+        $source->forceFill([
+            'host' => 'edge.example.test', 'port' => 443, 'server_port' => 30080,
+            'protocol_settings' => [
+                'tls' => 1, 'server_tls' => 0,
+                'tls_settings' => ['server_name' => 'edge.example.test', 'allow_insecure' => false],
+                'network' => 'xhttp', 'network_settings' => ['path' => '/edge'],
+            ],
+            'xray_config' => json_decode('{"dns":{"servers":["1.1.1.1"]}}'),
+        ])->saveQuietly();
+
+        $projected = XrayConfigService::projectedProtocolSettings($source->fresh());
+        $this->assertSame(1, $projected['tls']);
+        $this->assertSame(0, $projected['server_tls']);
+        $this->assertSame(0, ServerService::buildNodeConfig($source->fresh())['tls']);
+        $proxy = \App\Protocols\ClashMeta::buildVless((string) Str::uuid(), [
+            ...$source->toArray(), 'protocol_settings' => $projected,
+        ]);
+        $this->assertTrue($proxy['tls']);
+        $this->assertSame('edge.example.test', $proxy['servername']);
+        $this->assertFalse($proxy['skip-cert-verify']);
+        $this->assertSame('/edge', $proxy['xhttp-opts']['path']);
+        $this->assertSame(1, $source->fresh()->protocol_settings['tls']);
+
+        $candidate = $this->postJson($this->path('saveOutbound'), [
+            'name' => 'Public TLS source', 'source_type' => 'server',
+            'source_node_id' => $source->id, 'resolution_mode' => 'live',
+            'service_credential' => ['uuid' => (string) Str::uuid()],
+        ])->assertOk()->json('data');
+        $target = $this->node();
+        $this->postJson($this->path('bindings'), [
+            'node_id' => $target->id,
+            'outbound_bindings' => [['outbound_id' => $candidate['id'], 'tag' => 'edge']],
+            'expected_revision' => 0,
+        ])->assertOk();
+        $outbound = XrayConfigService::effective($target->fresh())->outbounds[1];
+        $this->assertSame('tls', $outbound->streamSettings->security);
+        $this->assertSame('edge.example.test', $outbound->streamSettings->tlsSettings->serverName);
+        $this->assertSame(443, $outbound->settings->vnext[0]->port);
+    }
+
     public function test_hysteria_and_shadowsocks_managed_baselines_match_node_builders(): void
     {
         $this->admin();

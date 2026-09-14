@@ -1430,8 +1430,11 @@ class XrayConfigService
             default => 0,
         };
 
-        if ($protocol === 'vless' && array_key_exists('server_tls', $settings)) {
+        if ($protocol === 'vless' && ($settings['server_tls'] ?? null) !== null) {
+            // An explicit listener override separates the public edge from
+            // Node security. Keep the public TLS/SNI/Reality settings intact.
             $settings['server_tls'] = $tlsMode;
+            return;
         }
         if (in_array($protocol, ['vmess', 'vless', 'trojan', 'http'], true)) {
             $settings['tls'] = $tlsMode;
@@ -2524,8 +2527,8 @@ class XrayConfigService
             }
         }
 
-        $serverTls = data_get($settings, 'server_tls');
-        $tlsMode = (int) ($serverTls === null ? data_get($settings, 'tls', 0) : $serverTls);
+        // Source outbounds dial the published endpoint, just like clients.
+        $tlsMode = (int) data_get($settings, 'tls', 0);
         $tlsSettings = data_get($settings, 'tls_settings');
         $reality = data_get($settings, 'reality_settings');
         if ($tlsMode === 2 || is_array($reality) || $reality instanceof stdClass) {

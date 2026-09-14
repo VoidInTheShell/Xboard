@@ -455,6 +455,10 @@ class ServerService
             $response['rule_files'] = $ruleFiles;
         }
 
+        if ($fallbackSite = app(FallbackSiteService::class)->resolve($node)) {
+            $response['fallback_site'] = $fallbackSite;
+        }
+
         return $response;
     }
 

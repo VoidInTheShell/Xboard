@@ -11,6 +11,7 @@ use App\Http\Controllers\V2\Admin\Server\ManageController;
 use App\Http\Controllers\V2\Admin\Server\MachineController;
 use App\Http\Controllers\V2\Admin\Server\XrayController;
 use App\Http\Controllers\V2\Admin\Server\RuleFileController;
+use App\Http\Controllers\V2\Admin\Server\FallbackController;
 use App\Http\Controllers\V2\Admin\OrderController;
 use App\Http\Controllers\V2\Admin\UserController;
 use App\Http\Controllers\V2\Admin\StatController;
@@ -53,6 +54,7 @@ class AdminRoute
             ], function ($router) {
                 $router->get('/fetch', [ConfigController::class, 'fetch']);
                 $router->post('/save', [ConfigController::class, 'save']);
+                $router->post('/uploadLogo', [ConfigController::class, 'uploadLogo']);
                 $router->get('/getEmailTemplate', [ConfigController::class, 'getEmailTemplate']);
                 $router->get('/getThemeTemplate', [ConfigController::class, 'getThemeTemplate']);
                 $router->post('/setTelegramWebhook', [ConfigController::class, 'setTelegramWebhook']);
@@ -122,6 +124,13 @@ class AdminRoute
                 $router->post('/resetTraffic', [ManageController::class, 'resetTraffic']);
                 $router->post('/batchResetTraffic', [ManageController::class, 'batchResetTraffic']);
                 $router->get('/generateEchKey', [ManageController::class, 'generateEchKey']);
+            });
+
+            $router->group([
+                'prefix' => 'server/fallback'
+            ], function ($router) {
+                $router->get('/templates', [FallbackController::class, 'templates']);
+                $router->post('/upload', [FallbackController::class, 'upload']);
             });
 
             // 机器管理接口

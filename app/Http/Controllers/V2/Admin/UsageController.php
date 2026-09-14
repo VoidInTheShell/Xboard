@@ -4,6 +4,7 @@ namespace App\Http\Controllers\V2\Admin;
 
 use App\Models\ServerMachine;
 use App\Services\Usage\UsageQueryService;
+use App\Services\Usage\MachineTrafficService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\CarbonImmutable;
@@ -108,15 +109,11 @@ class UsageController extends \App\Http\Controllers\V1\User\UsageController
 
     public static function defaultPolicy(): array
     {
-        return ['limit' => '1', 'unit' => 'TiB', 'resetDay' => '1', 'zone' => 'Asia/Shanghai', 'direction' => 'both', 'warning' => '80'];
+        return MachineTrafficService::defaultPolicy();
     }
 
     public static function cycle(array $policy, ?CarbonImmutable $now = null): array
     {
-        $now = ($now ?? CarbonImmutable::now())->setTimezone($policy['zone']);
-        $month = $now->startOfMonth();
-        $boundary = fn($m) => $m->addDays(min((int) $policy['resetDay'], $m->daysInMonth) - 1);
-        if ($now->lt($boundary($month))) $month = $month->subMonthNoOverflow();
-        return [$boundary($month)->timestamp, $boundary($month->addMonthNoOverflow())->timestamp];
+        return MachineTrafficService::cycle($policy, $now);
     }
 }

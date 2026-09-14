@@ -6,6 +6,7 @@ use App\Exceptions\ApiException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\NoticeSave;
 use App\Models\Notice;
+use App\Models\NoticeAcknowledgement;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -14,7 +15,8 @@ class NoticeController extends Controller
     public function fetch(Request $request)
     {
         return $this->success(
-            Notice::orderBy('sort', 'ASC')
+            Notice::orderByDesc('pinned')
+                ->orderBy('sort', 'ASC')
                 ->orderBy('id', 'DESC')
                 ->get()
         );
@@ -28,7 +30,9 @@ class NoticeController extends Controller
             'img_url',
             'tags',
             'show',
-            'popup'
+            'popup',
+            'pinned',
+            'require_ack'
         ]);
         if (!$request->input('id')) {
             if (!Notice::create($data)) {
@@ -36,7 +40,12 @@ class NoticeController extends Controller
             }
         } else {
             try {
-                Notice::find($request->input('id'))->update($data);
+                $notice = Notice::find($request->input('id'));
+                if (!$notice) {
+                    return $this->fail([404, '公告不存在']);
+                }
+                $data['revision'] = ((int) $notice->revision) + 1;
+                $notice->update($data);
             } catch (\Exception $e) {
                 return $this->fail([500, '保存失败']);
             }
@@ -56,6 +65,7 @@ class NoticeController extends Controller
             return $this->fail([400202, '公告不存在']);
         }
         $notice->show = $notice->show ? 0 : 1;
+        $notice->revision = ((int) $notice->revision) + 1;
         if (!$notice->save()) {
             return $this->fail([500, '保存失败']);
         }
@@ -72,9 +82,10 @@ class NoticeController extends Controller
         if (!$notice) {
             return $this->fail([400202, '公告不存在']);
         }
-        if (!$notice->delete()) {
-            return $this->fail([500, '删除失败']);
-        }
+        DB::transaction(function () use ($notice) {
+            NoticeAcknowledgement::where('notice_id', $notice->id)->delete();
+            $notice->delete();
+        });
         return $this->success(true);
     }
 

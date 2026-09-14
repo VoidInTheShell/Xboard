@@ -62,6 +62,7 @@ class UserRoute
             $router->get('/invite/details', [InviteController::class, 'details']);
             // Notice
             $router->get('/notice/fetch', [NoticeController::class, 'fetch']);
+            $router->post('/notice/acknowledge', [NoticeController::class, 'acknowledge']);
             // Ticket
             $router->post('/ticket/reply', [TicketController::class, 'reply']);
             $router->post('/ticket/close', [TicketController::class, 'close']);

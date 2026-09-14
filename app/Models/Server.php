@@ -133,6 +133,7 @@ class Server extends Model
         'xray_client_settings' => 'object',
         'custom_routes' => 'array',
         'cert_config' => 'array',
+        'fallback_site' => 'array',
         'last_check_at' => 'integer',
         'last_push_at' => 'integer',
         'show' => 'boolean',

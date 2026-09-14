@@ -14,5 +14,9 @@ class Notice extends Model
         'updated_at' => 'timestamp',
         'tags' => 'array',
         'show' => 'boolean',
+        'popup' => 'boolean',
+        'pinned' => 'boolean',
+        'require_ack' => 'boolean',
+        'revision' => 'integer',
     ];
 }

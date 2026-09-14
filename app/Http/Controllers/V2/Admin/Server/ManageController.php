@@ -9,6 +9,7 @@ use App\Models\Outbound;
 use App\Models\Server;
 use App\Models\ServerGroup;
 use App\Services\ServerService;
+use App\Services\FallbackSiteService;
 use App\Services\XrayConfigService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -71,6 +72,11 @@ class ManageController extends Controller
 
         $candidate = new Server();
         $candidate->fill($params);
+        if (!array_key_exists('fallback_site', $params)
+            && app(FallbackSiteService::class)->supportsDefault($candidate)) {
+            $params['fallback_site'] = FallbackSiteService::defaultConfig();
+            $candidate->fallback_site = $params['fallback_site'];
+        }
         if (XrayConfigService::supports($candidate)) {
             $params['xray_config'] = XrayConfigService::defaultNodeConfig();
             $params['default_outbound_tag'] = 'direct';
@@ -104,6 +110,7 @@ class ManageController extends Controller
             null,
             null,
         );
+        app(FallbackSiteService::class)->validate($candidate);
     }
 
     public function update(Request $request)

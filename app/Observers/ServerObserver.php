@@ -25,6 +25,7 @@ class ServerObserver
         'custom_outbounds',
         'custom_routes',
         'cert_config',
+        'fallback_site',
         'xray_config',
         'outbound_bindings',
         'machine_id',

@@ -66,7 +66,9 @@ class UsageController extends \App\Http\Controllers\V1\User\UsageController
         }
         return $this->success($rows->map(fn($r) => [
             'at' => max($from, (int) $r->bucket) * 1000, 'serverId' => (string) $r->machine_id, 'nodeId' => (string) $r->node_id,
-            'resourceId' => $r->machine_id . ':' . $r->resource, 'name' => $r->resource,
+            'resourceId' => $r->machine_id . ':' . $r->resource,
+            'name' => $r->layer === 'nic' ? preg_replace('/^(host|container):/', '', $r->resource) : $r->resource,
+            'collectionScope' => $r->layer === 'nic' && preg_match('/^(host|container):/', $r->resource, $match) ? $match[1] : 'unknown',
             'layer' => $r->layer, 'incoming' => $r->up / 1073741824, 'outgoing' => $r->down / 1073741824,
         ]));
     }

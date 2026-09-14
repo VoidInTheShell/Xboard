@@ -61,6 +61,7 @@ class UsageController extends Controller
         } else {
             $rules['counters'] = 'present|array|max:64';
             $rules['counters.*.interface'] = 'required|string|regex:/^[a-zA-Z0-9_.:-]{1,64}$/|distinct';
+            $rules['counters.*.scope'] = 'sometimes|in:host,container';
         }
         $data = $request->validate($rules);
         $accepted = app(UsageIngestService::class)->ingest($scope, $id, $data, $node);

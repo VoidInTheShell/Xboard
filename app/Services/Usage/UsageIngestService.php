@@ -55,6 +55,11 @@ class UsageIngestService
             $devicesComplete = false;
             foreach ($rows as $row) {
                 $resource = $scope === 'node' ? 'user:' . $row['user_id'] : $row['interface'];
+                // A changed collection scope starts a separate counter baseline;
+                // never subtract a container reading from a host lifetime counter.
+                if ($scope === 'machine' && isset($row['scope'])) {
+                    $resource = $row['scope'] . ':' . $resource;
+                }
                 $old = $previous->get($resource);
                 // First sample establishes the baseline: lifetime interface counts
                 // or a new agent epoch must not be billed into one current hour.

@@ -51,6 +51,40 @@ class UsageSecurityTest extends TestCase
             'devices' => [['user_id' => $uid, 'ip' => '192.0.2.10']]];
     }
 
+    public function test_machine_network_scope_changes_do_not_import_lifetime_counters(): void
+    {
+        $node = $this->node();
+        $machine = ServerMachine::findOrFail($node->machine_id);
+        $sequence = 0;
+        $send = function (?string $scope, int $bytes) use ($machine, &$sequence) {
+            $counter = ['interface' => 'eth0', 'up' => $bytes, 'down' => $bytes];
+            if ($scope !== null) $counter['scope'] = $scope;
+            return $this->postJson('/api/v2/server/machine/usage', [
+                'machine_id' => $machine->id, 'token' => $machine->token,
+                'epoch' => '0123456789abcdef', 'sequence' => ++$sequence,
+                'sampled_at' => time(), 'counters' => [$counter],
+            ]);
+        };
+        $send(null, 100)->assertOk();
+        $send(null, 150)->assertOk();
+        $send('container', 1000000)->assertOk();
+        $send('container', 1001024)->assertOk();
+        $send('host', 9000000000)->assertOk();
+        $send('host', 9000002048)->assertOk();
+        $this->assertSame(3122, (int) DB::table('v2_usage_traffic')->where('layer', 'nic')->sum('up'));
+        $send('invalid', 1)->assertStatus(422);
+
+        Sanctum::actingAs($this->user(['is_admin' => true]));
+        $route = collect($this->app['router']->getRoutes()->getRoutes())
+            ->first(fn($route) => $route->getActionName() === \App\Http\Controllers\V2\Admin\UsageController::class . '@infrastructure');
+        $rows = collect($this->getJson('/' . $route->uri() . '?machine_id=' . $machine->id)->assertOk()->json('data'));
+        $this->assertEqualsCanonicalizing(['unknown', 'container', 'host'], $rows->pluck('collectionScope')->all());
+        $this->assertSame(['eth0'], $rows->pluck('name')->unique()->values()->all());
+        $host = $rows->firstWhere('collectionScope', 'host');
+        $this->assertSame($machine->id . ':host:eth0', $host['resourceId']);
+        $this->assertEqualsWithDelta(2048 / 1073741824, $host['incoming'], 1e-12);
+    }
+
     public function test_security_review_is_persistent_and_cannot_review_another_users_signal(): void
     {
         $user = $this->user(); $other = $this->user(); $node = $this->node();

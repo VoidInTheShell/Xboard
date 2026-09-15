@@ -40,6 +40,7 @@ services:
       - admin_route_token
     networks:
       - xboard-internal
+      - xboard-egress
     mem_limit: 448m
     mem_reservation: 256m
     cpus: 1.0
@@ -156,6 +157,8 @@ volumes:
   redis-data:
 
 networks:
+  xboard-egress:
+    driver: bridge
   xboard-internal:
     internal: true
   appnet:

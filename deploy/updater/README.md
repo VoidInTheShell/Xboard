@@ -6,6 +6,8 @@ Admin 的“版本更新”和 MCP 使用相同的持久化任务接口。用户
 
 ## 首次接入
 
+后端容器必须能解析并通过 HTTPS 访问 `api.github.com`、`github.com` 及其发布附件下载域名，才能检测与校验发布版本。仅连接 `internal: true` 的 Docker 网络会使 WebUI 版本检测失败。仓库的 staging/production Compose 为后端配置独立的 `xboard-egress` bridge 网络，保留原内部网络；该出站网络不发布宿主端口。旧部署接入更新器时也要补齐并持久化这一网络配置，不能只验证宿主机能访问 GitHub。更新器所在宿主机还需能访问 GHCR 和 GitHub 发布附件。
+
 首次接入需先手动安装含更新任务迁移、`update:executor`、`update:database` 和 `.docker/update-control.sh` 的后端版本，以及含 `updater` 子命令的自有 `xbctl` 正式/开发版本。不能用尚未接入的旧面板完成这次引导安装。后端目标镜像还必须包含 `/etc/xboard-update-protocol` 标记 `1`；更新器拉取后以无网络、只读的一次性容器读取标记，不启动应用。缺少标记的历史镜像在停止原实例前拒绝。之后由面板或 MCP 手动选择已发布版本，不由发布工作流自动部署。
 
 1. 在后端容器内为宿主机签发专用凭据：

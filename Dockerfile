@@ -23,6 +23,10 @@ COPY .docker/php/zz-xboard.ini /usr/local/etc/php/conf.d/zz-xboard.ini
 ARG APP_VERSION=dev
 ARG INSTALL_DEV_DEPENDENCIES=false
 
+ENV APP_VERSION=${APP_VERSION}
+LABEL org.opencontainers.image.version=${APP_VERSION}
+RUN printf '%s\n' "$APP_VERSION" > /etc/xboard-version && printf '1\n' > /etc/xboard-update-protocol
+
 RUN if [ -n "${APP_VERSION}" ]; then \
         sed -i "s/'version' => '.*'/'version' => '${APP_VERSION}'/g" config/app.php; \
     fi \
@@ -45,6 +49,6 @@ ENV ENABLE_WEB=true \
 
 EXPOSE 7001
 COPY .docker/entrypoint.sh /entrypoint.sh
-RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh /www/.docker/update-control.sh && chmod +x /entrypoint.sh /www/.docker/update-control.sh
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"] 

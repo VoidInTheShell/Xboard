@@ -1,0 +1,28 @@
+{
+  "panel_url": "https://panel.example.com",
+  "token_file": "/etc/xboard-updater/token",
+  "state_dir": "/var/lib/xboard-updater",
+  "targets": [
+    {
+      "id": "backend", "name": "Xboard 后端", "component": "xboard",
+      "method": "docker", "container": "xboard-app",
+      "health_url": "http://127.0.0.1:7001/",
+      "quiesce": ["/etc/xboard-updater/panel-hook.sh", "quiesce", "{task_dir}"],
+      "backup": ["/etc/xboard-updater/panel-hook.sh", "backup", "{task_dir}"],
+      "migrate": ["/etc/xboard-updater/panel-hook.sh", "migrate", "{task_dir}"],
+      "verify": ["/etc/xboard-updater/panel-hook.sh", "verify", "{task_dir}"],
+      "restore": ["/etc/xboard-updater/panel-hook.sh", "restore", "{task_dir}"],
+      "resume": ["/etc/xboard-updater/panel-hook.sh", "resume", "{task_dir}"]
+    },
+    {
+      "id": "admin", "name": "Xboard Admin", "component": "xboard-admin",
+      "method": "docker", "container": "xboard-admin",
+      "health_url": "http://127.0.0.1:7003/healthz"
+    },
+    {
+      "id": "theme", "name": "DK Theme", "component": "dk_theme",
+      "method": "docker", "container": "xboard-theme",
+      "health_url": "http://127.0.0.1:7002/healthz"
+    }
+  ]
+}

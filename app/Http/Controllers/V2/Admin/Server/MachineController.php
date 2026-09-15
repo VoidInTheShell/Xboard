@@ -12,6 +12,8 @@ use Illuminate\Http\Request;
 
 class MachineController extends Controller
 {
+    private const INSTALL_VERSION_RULES = ['nullable', 'string', 'regex:/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-dev\.[1-9][0-9]*\.[1-9][0-9]*)?$/D'];
+
     /**
      * 获取机器列表（附带关联节点数）
      */
@@ -45,6 +47,7 @@ class MachineController extends Controller
         $params = $request->validate([
             'id' => 'nullable|integer|exists:v2_server_machine,id',
             'name' => 'required|string|max:255',
+            'version' => self::INSTALL_VERSION_RULES,
             'notes' => 'nullable|string',
             'is_active' => 'nullable|boolean',
         ]);
@@ -211,7 +214,12 @@ class MachineController extends Controller
     private function buildInstallCommand(Request $request, ServerMachine $machine): string
     {
         $panelUrl = rtrim((string) (admin_setting('app_url') ?: $request->getSchemeAndHttpHost()), '/');
-        $installerUrl = 'https://raw.githubusercontent.com/VoidInTheShell/Xboard-Node/dev/install.sh';
+        $params = $request->validate([
+            'version' => self::INSTALL_VERSION_RULES,
+        ]);
+        $version = $params['version'] ?? null;
+        $releasePath = $version ? 'download/' . $version : 'latest/download';
+        $installerUrl = 'https://github.com/VoidInTheShell/Xboard-Node/releases/' . $releasePath . '/install.sh';
 
         return sprintf(
             'curl -fsSL %s | sudo bash -s -- --mode machine --panel %s --token %s --machine-id %d',

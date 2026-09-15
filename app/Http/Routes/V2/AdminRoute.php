@@ -32,6 +32,10 @@ class AdminRoute
     public function map(Registrar $router)
     {
         $routes = function (Registrar $router): void {
+            $router->group(['prefix' => 'update'], function ($route) {
+                foreach (['overview', 'releases', 'task'] as $action) $route->get($action, [\App\Http\Controllers\V2\Admin\UpdateController::class, $action]);
+                $route->post('tasks', [\App\Http\Controllers\V2\Admin\UpdateController::class, 'create']);
+            });
             $router->group(['prefix'=>'logs','middleware'=>'throttle:60,1'], function ($router) {
                 foreach (['settings','stats','mail','runtime','archive'] as $action) {
                     $router->get('/'.$action,[\App\Http\Controllers\V2\Admin\LogController::class,$action]);

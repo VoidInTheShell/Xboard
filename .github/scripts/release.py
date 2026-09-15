@@ -49,6 +49,23 @@ def api(path, data=None, method=None, missing=False, binary=False):
         raise RuntimeError(f"GitHub API {error.code} for {path.split('?')[0]}") from None
 
 
+def release_for_tag(repo, tag):
+    # The tag endpoint returns published releases only. Drafts require listing.
+    release = api(f"repos/{repo}/releases/tags/{tag}", missing=True)
+    if release is not None:
+        return release
+    for page in range(1, 101):
+        batch = api(f"repos/{repo}/releases?per_page=100&page={page}")
+        require(isinstance(batch, list), "Invalid release listing")
+        matches = [item for item in batch if item.get("tag_name") == tag]
+        require(len(matches) <= 1, "Ambiguous release tag")
+        if matches:
+            return matches[0]
+        if len(batch) < 100:
+            return None
+    raise ValueError("Release listing limit reached; refusing to create a duplicate")
+
+
 def public_json(url, repo, tag):
     prefix = f"https://github.com/{repo}/releases/download/{tag}/"
     require(url == prefix + ASSET, "Unexpected manifest asset URL")
@@ -145,7 +162,7 @@ def prepare(config, path):
     repo, tag = manifest["repository"], manifest["version"]
     source = manifest["source_commit"]
     if manifest["publish"]:
-        release = api(f"repos/{repo}/releases/tags/{tag}", missing=True)
+        release = release_for_tag(repo, tag)
         require(release is None or release["draft"], "Version already published; choose a new version")
         if release:
             require(release.get("target_commitish") == source, "Draft release belongs to a different commit")
@@ -203,7 +220,8 @@ def complete(path, assets_dir):
             and os.environ["GITHUB_SHA"] == manifest["source_commit"], "Release execution identity changed")
     validate_manifest(manifest, manifest["component"], tag)
     require(image_exists(manifest["image"]), "Image missing")
-    release = api(f"repos/{repo}/releases/tags/{tag}")
+    release = release_for_tag(repo, tag)
+    require(release is not None, "Prepared draft release is missing")
     require(release["draft"], "Release is already public")
     required = [path]
     if manifest["component"] == "xboard-node":

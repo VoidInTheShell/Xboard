@@ -7,6 +7,8 @@ the next development cycle after a formal release.
 ## Publish
 
 - A dev push publishes the final commit as vNEXT-dev.RUN_ID.RUN_ATTEMPT.
+  A push containing multiple commits produces one version from that event's tip,
+  not one version per commit. Later branch changes do not change its source.
 - Run the existing workflow on master with release_version=v1.1.0 to publish a formal
   version. The input must match next_version. No merge or deployment is performed
   by this formal publishing operation.

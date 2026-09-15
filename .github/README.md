@@ -53,3 +53,10 @@ on both architectures. No artifact hash comparison is required.
 Published image versions are never overwritten on retries. Authentication or
 registry failures stop publication instead of assuming a version does not exist.
 A failed release stays draft and must not be listed as an available update.
+
+## Discover a new development version
+
+Wait for the workflow to publish a non-draft Pre-release with its complete
+release-manifest.json. In Admin, select the component's Dev channel and refresh
+the version list. A newly pushed commit or a draft tag is not installable.
+The selected full version remains fixed when the update task is created.

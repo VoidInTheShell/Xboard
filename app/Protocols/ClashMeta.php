@@ -31,7 +31,7 @@ class ClashMeta extends AbstractProtocol
     ];
     const CUSTOM_TEMPLATE_FILE = 'resources/rules/custom.clashmeta.yaml';
     const CUSTOM_CLASH_TEMPLATE_FILE = 'resources/rules/custom.clash.yaml';
-    const DEFAULT_TEMPLATE_FILE = 'resources/rules/default.clash.yaml';
+    const DEFAULT_TEMPLATE_FILE = 'resources/rules/default.clashmeta.yaml';
     public $allowedProtocols = [
         Server::TYPE_SHADOWSOCKS,
         Server::TYPE_VMESS,
@@ -235,6 +235,14 @@ class ClashMeta extends AbstractProtocol
             if ($isFilter)
                 continue;
             $config['proxy-groups'][$k]['proxies'] = array_merge($config['proxy-groups'][$k]['proxies'], $proxies);
+        }
+        // Regex entries are panel-side node expansion placeholders. Remove
+        // any that did not get expanded so empty subscriptions remain valid.
+        foreach ($config['proxy-groups'] as $k => $group) {
+            $config['proxy-groups'][$k]['proxies'] = array_values(array_filter(
+                $config['proxy-groups'][$k]['proxies'],
+                fn($proxy) => !$this->isRegex($proxy)
+            ));
         }
         $config['proxy-groups'] = array_filter($config['proxy-groups'], function ($group) {
             return $group['proxies'];

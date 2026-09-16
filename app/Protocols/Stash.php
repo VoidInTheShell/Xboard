@@ -159,6 +159,14 @@ class Stash extends AbstractProtocol
                 continue;
             $config['proxy-groups'][$k]['proxies'] = array_merge($config['proxy-groups'][$k]['proxies'], $proxies);
         }
+        // Regex entries are panel-side node expansion placeholders. Remove
+        // any that did not get expanded so empty subscriptions remain valid.
+        foreach ($config['proxy-groups'] as $k => $group) {
+            $config['proxy-groups'][$k]['proxies'] = array_values(array_filter(
+                $config['proxy-groups'][$k]['proxies'],
+                fn($proxy) => !$this->isRegex($proxy)
+            ));
+        }
         $config['proxy-groups'] = array_filter($config['proxy-groups'], function ($group) {
             return $group['proxies'];
         });

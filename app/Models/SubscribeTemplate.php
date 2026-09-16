@@ -9,9 +9,9 @@ class SubscribeTemplate extends Model
 {
     private const DEFAULT_FILES = [
         'singbox' => 'resources/rules/default.sing-box.json',
-        // Clash and Clash Meta intentionally share the project-maintained
-        // fake-IP whitelist baseline derived from clash-rule-temp.
-        'clash' => 'resources/rules/default.clashmeta.yaml',
+        // Keep separate Clash and Clash Meta files; only their panel node
+        // injection/proxy-group sections differ.
+        'clash' => 'resources/rules/default.clash.yaml',
         'clashmeta' => 'resources/rules/default.clashmeta.yaml',
         'stash' => 'resources/rules/default.clash.yaml',
         'surge' => 'resources/rules/default.surge.conf',

@@ -29,6 +29,8 @@ class AdminOperationCatalog
         'traffic-reset' => 'system',
         'stat' => 'system',
         'mcp' => 'system',
+        'usage' => 'infrastructure',
+        'update' => 'system',
     ];
 
     private const READ_ACTIONS = [
@@ -124,6 +126,7 @@ class AdminOperationCatalog
         $domain = self::DOMAIN_MAP[$root] ?? 'system';
         $actionSegment = strtolower((string) end($segments));
         $readOnly = $method === 'GET' || $this->isReadAction($actionSegment);
+        $dangerous = !$readOnly && ($this->isDangerousAction($actionSegment) || $path === 'update/tasks');
         preg_match_all('/\{([^}]+)\}/', $path, $pathMatches);
 
         return [
@@ -133,8 +136,8 @@ class AdminOperationCatalog
             'domain' => $domain,
             'resource' => $this->resourceName($segments),
             'read_only' => $readOnly,
-            'dangerous' => !$readOnly && $this->isDangerousAction($actionSegment),
-            'required_confirmation' => !$readOnly && $this->isDangerousAction($actionSegment)
+            'dangerous' => $dangerous,
+            'required_confirmation' => $dangerous
                 ? 'CONFIRM ' . $this->operationId($path, $method)
                 : null,
             'path_parameters' => $pathMatches[1] ?? [],

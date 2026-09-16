@@ -128,7 +128,11 @@ redis_reachable() {
     esac
 }
 
-if [ ! -s /www/.env ] || ! grep -qE '^INSTALLED=(1|true)$' /www/.env || echo " $* " | grep -q ' xboard:install '; then
+if [ -f /www/.docker/.data/update-maintenance ]; then
+    # The external updater owns migrations and writer restart while this gate exists.
+    export ENABLE_WEB=false ENABLE_HORIZON=false ENABLE_WS_SERVER=false ENABLE_CADDY=false
+    echo "[entrypoint] Update maintenance: application writers remain stopped."
+elif [ ! -s /www/.env ] || ! grep -qE '^INSTALLED=(1|true)$' /www/.env || echo " $* " | grep -q ' xboard:install '; then
     echo "[entrypoint] Skipping xboard:update (not yet installed or running xboard:install)."
 else
     if redis_reachable; then

@@ -80,9 +80,19 @@ flock -x 9
 log "acquired production deployment lock"
 
 AUTH_DIR=$(mktemp -d "/tmp/dk-theme-production-auth.XXXXXX")
+deployment_complete=0
+rollback_ready=0
 cleanup() {
+    local rc=$?
+    trap - EXIT
+    if [ "$rc" -ne 0 ] && [ "$rollback_ready" = 1 ] && [ "$deployment_complete" = 0 ]; then
+        cp -a "$AUTH_DIR/previous.env" "$TARGET_DIR/.deploy.env"
+        docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" up -d --no-deps theme || true
+        docker exec bunkerweb-bunkerweb-1 nginx -s reload >/dev/null 2>&1 || true
+    fi
     rm -rf -- "$AUTH_DIR"
     unset REGISTRY_TOKEN
+    exit "$rc"
 }
 trap cleanup EXIT
 
@@ -91,6 +101,8 @@ printf '%s\n' "$REGISTRY_TOKEN" | docker --config "$AUTH_DIR" login ghcr.io --us
 unset REGISTRY_TOKEN
 docker --config "$AUTH_DIR" pull "$THEME_IMAGE" >/dev/null 2>&1 || fail "could not pull the Theme version tag"
 
+cp -a "$TARGET_DIR/.deploy.env" "$AUTH_DIR/previous.env"
+rollback_ready=1
 set_env_value "$TARGET_DIR/.deploy.env" "DK_THEME_IMAGE" "$THEME_IMAGE"
 compose() {
     docker compose --env-file "$TARGET_DIR/.deploy.env" -f "$TARGET_DIR/compose.yaml" "$@"
@@ -105,5 +117,9 @@ fi
 docker exec xboard-theme wget -q -O /dev/null http://127.0.0.1/healthz
 docker exec xboard-theme test -s /var/run/xboard-admin-route/active.conf
 refresh_bunkerweb_upstream
+deployment_complete=1
+if [ -f "/usr/local/libexec/xboard-ci/assets/release-maintenance.py" ]; then
+    python3 "/usr/local/libexec/xboard-ci/assets/release-maintenance.py" "$TARGET_DIR"
+fi
 log "production Theme deployment complete: $THEME_IMAGE"
 compose ps theme

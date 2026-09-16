@@ -25,6 +25,13 @@ class UserRoute
             'prefix' => 'user',
             'middleware' => 'user'
         ], function ($router) {
+            $router->group(['prefix' => 'usage', 'middleware' => 'throttle:60,1'], function ($router) {
+                foreach (['snapshot', 'events', 'leaderboard', 'ip'] as $action) {
+                    $router->get('/' . $action, [\App\Http\Controllers\V1\User\UsageController::class, $action]);
+                }
+                $router->post('/visit', [\App\Http\Controllers\V1\User\UsageController::class, 'visit']);
+                $router->post('/review', [\App\Http\Controllers\V1\User\UsageController::class, 'review']);
+            });
             // User
             $router->get('/resetSecurity', [UserController::class, 'resetSecurity']);
             $router->get('/info', [UserController::class, 'info']);
@@ -55,6 +62,7 @@ class UserRoute
             $router->get('/invite/details', [InviteController::class, 'details']);
             // Notice
             $router->get('/notice/fetch', [NoticeController::class, 'fetch']);
+            $router->post('/notice/acknowledge', [NoticeController::class, 'acknowledge']);
             // Ticket
             $router->post('/ticket/reply', [TicketController::class, 'reply']);
             $router->post('/ticket/close', [TicketController::class, 'close']);

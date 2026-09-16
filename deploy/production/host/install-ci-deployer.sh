@@ -21,7 +21,7 @@ require_source() {
 [ "$(id -u)" = "0" ] || fail "installer must run as root"
 [ -f "$PUBLIC_KEY_FILE" ] || fail "public key file is required"
 [ -d "$SOURCE_DIR" ] || fail "source directory is required"
-for file in xboard-ci-entrypoint.sh xboard-ci-dispatcher.sh deploy.sh deploy-theme.sh deploy-admin.sh verify-theme.sh verify-production.sh compose.yaml production-bootstrap.php sqlite-data-guard.php xboard-mcp.conf apply-mcp-compat.sh; do
+for file in xboard-ci-entrypoint.sh xboard-ci-dispatcher.sh deploy.sh deploy-theme.sh deploy-admin.sh verify-theme.sh verify-production.sh compose.yaml production-bootstrap.php sqlite-data-guard.php release-maintenance.py xboard-mcp.conf apply-mcp-compat.sh; do
     require_source "$file"
 done
 
@@ -50,6 +50,7 @@ install -o root -g root -m 755 "$SOURCE_DIR/verify-production.sh" "$LIBEXEC_DIR/
 install -o root -g root -m 644 "$SOURCE_DIR/compose.yaml" "$LIBEXEC_DIR/assets/compose.yaml"
 install -o root -g root -m 644 "$SOURCE_DIR/production-bootstrap.php" "$LIBEXEC_DIR/assets/production-bootstrap.php"
 install -o root -g root -m 644 "$SOURCE_DIR/sqlite-data-guard.php" "$LIBEXEC_DIR/assets/sqlite-data-guard.php"
+install -o root -g root -m 644 "$SOURCE_DIR/release-maintenance.py" "$LIBEXEC_DIR/assets/release-maintenance.py"
 install -o root -g root -m 644 "$SOURCE_DIR/xboard-mcp.conf" "$LIBEXEC_DIR/assets/xboard-mcp.conf"
 install -o root -g root -m 755 "$SOURCE_DIR/apply-mcp-compat.sh" "$LIBEXEC_DIR/assets/apply-mcp-compat.sh"
 

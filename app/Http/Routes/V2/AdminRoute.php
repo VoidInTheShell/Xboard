@@ -10,6 +10,8 @@ use App\Http\Controllers\V2\Admin\Server\RouteController;
 use App\Http\Controllers\V2\Admin\Server\ManageController;
 use App\Http\Controllers\V2\Admin\Server\MachineController;
 use App\Http\Controllers\V2\Admin\Server\XrayController;
+use App\Http\Controllers\V2\Admin\Server\RuleFileController;
+use App\Http\Controllers\V2\Admin\Server\FallbackController;
 use App\Http\Controllers\V2\Admin\OrderController;
 use App\Http\Controllers\V2\Admin\UserController;
 use App\Http\Controllers\V2\Admin\StatController;
@@ -30,12 +32,33 @@ class AdminRoute
     public function map(Registrar $router)
     {
         $routes = function (Registrar $router): void {
+            $router->group(['prefix' => 'update'], function ($route) {
+                foreach (['overview', 'releases', 'task'] as $action) $route->get($action, [\App\Http\Controllers\V2\Admin\UpdateController::class, $action]);
+                $route->post('tasks', [\App\Http\Controllers\V2\Admin\UpdateController::class, 'create']);
+            });
+            $router->group(['prefix'=>'logs','middleware'=>'throttle:60,1'], function ($router) {
+                foreach (['settings','stats','mail','runtime','archive'] as $action) {
+                    $router->get('/'.$action,[\App\Http\Controllers\V2\Admin\LogController::class,$action]);
+                }
+                $router->post('/save',[\App\Http\Controllers\V2\Admin\LogController::class,'save']);
+            });
+            $router->group(['prefix' => 'usage', 'middleware' => 'throttle:60,1'], function ($router) {
+                foreach (['snapshot', 'events', 'leaderboard', 'online', 'infrastructure', 'policy', 'ip', 'settings'] as $action) {
+                    $router->get('/' . $action, [\App\Http\Controllers\V2\Admin\UsageController::class, $action]);
+                }
+                $router->post('/policy/save', [\App\Http\Controllers\V2\Admin\UsageController::class, 'savePolicy']);
+                $router->post('/settings/save', [\App\Http\Controllers\V2\Admin\UsageController::class, 'saveSettings']);
+                $router->post('/review', [\App\Http\Controllers\V2\Admin\UsageController::class, 'review']);
+                // Browsing is an access event, not an admin configuration mutation.
+                $router->post('/visit', [\App\Http\Controllers\V2\Admin\UsageController::class, 'visit'])->withoutMiddleware('log');
+            });
             // Config
             $router->group([
                 'prefix' => 'config'
             ], function ($router) {
                 $router->get('/fetch', [ConfigController::class, 'fetch']);
                 $router->post('/save', [ConfigController::class, 'save']);
+                $router->post('/uploadLogo', [ConfigController::class, 'uploadLogo']);
                 $router->get('/getEmailTemplate', [ConfigController::class, 'getEmailTemplate']);
                 $router->get('/getThemeTemplate', [ConfigController::class, 'getThemeTemplate']);
                 $router->post('/setTelegramWebhook', [ConfigController::class, 'setTelegramWebhook']);
@@ -107,6 +130,13 @@ class AdminRoute
                 $router->get('/generateEchKey', [ManageController::class, 'generateEchKey']);
             });
 
+            $router->group([
+                'prefix' => 'server/fallback'
+            ], function ($router) {
+                $router->get('/templates', [FallbackController::class, 'templates']);
+                $router->post('/upload', [FallbackController::class, 'upload']);
+            });
+
             // 机器管理接口
             $router->group(['prefix' => 'server/xray'], function ($router) {
                 $router->post('/generateVlessEncryption', [XrayController::class, 'generateVlessEncryption']);
@@ -115,6 +145,7 @@ class AdminRoute
                 $router->post('/save', [XrayController::class, 'save']);
                 $router->get('/bindings', [XrayController::class, 'bindings']);
                 $router->post('/bindings', [XrayController::class, 'bindings']);
+                $router->post('/default-outbound', [XrayController::class, 'defaultOutbound']);
                 $router->get('/machine', [XrayController::class, 'machine']);
                 $router->post('/machine', [XrayController::class, 'machine']);
             });
@@ -122,9 +153,17 @@ class AdminRoute
                 $router->get('/fetch', [XrayController::class, 'outbounds']);
                 $router->post('/validate', [XrayController::class, 'validateOutbound']);
                 $router->post('/save', [XrayController::class, 'saveOutbound']);
+                $router->post('/import', [XrayController::class, 'importOutbounds']);
                 $router->get('/snapshot', [XrayController::class, 'snapshot']);
                 $router->post('/snapshot', [XrayController::class, 'snapshot']);
                 $router->post('/drop', [XrayController::class, 'dropOutbound']);
+            });
+            $router->group(['prefix' => 'server/xray/rule-file'], function ($router) {
+                $router->get('/fetch', [RuleFileController::class, 'fetch']);
+                $router->post('/validate', [RuleFileController::class, 'validateFile']);
+                $router->post('/save', [RuleFileController::class, 'save']);
+                $router->post('/download', [RuleFileController::class, 'download']);
+                $router->post('/drop', [RuleFileController::class, 'drop']);
             });
 
             $router->group([

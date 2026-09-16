@@ -24,8 +24,12 @@ Xboard is a modern panel system built on Laravel 11, focusing on providing a cle
 ## 🚀 Quick Start
 
 ```bash
-git clone -b compose --depth 1 https://github.com/cedar2025/Xboard && \
-cd Xboard && \
+git clone -b dev --depth 1 https://github.com/VoidInTheShell/Xboard
+cd Xboard
+cp compose.sample.yaml compose.yaml
+read -r -p 'Published Xboard version tag (build-<run>-<attempt> or release tag): ' XBOARD_VERSION
+export XBOARD_VERSION
+printf 'XBOARD_VERSION=%s\n' "$XBOARD_VERSION" > .env
 docker compose run -it --rm \
     -e ENABLE_SQLITE=true \
     -e ENABLE_REDIS=true \
@@ -33,6 +37,14 @@ docker compose run -it --rm \
     xboard php artisan xboard:install && \
 docker compose up -d
 ```
+
+The samples use `ghcr.io/voidintheshell/xboard` and require an explicitly selected
+published version tag. Copy it from this repository's successful publish job;
+`latest` is not selected automatically. The full three-container deployment uses
+`ghcr.io/voidintheshell/xboard-admin` and `ghcr.io/voidintheshell/dk_theme` alongside
+the panel image; see [staging](deploy/staging/README.md) and
+[production](deploy/production/README.md). Container stdout rotates at 10 MB × 3
+files per container; mounted panel logs have a separate budget.
 
 > After installation, visit: http://SERVER_IP:7001  
 > ⚠️ Make sure to save the admin credentials shown during installation
@@ -96,6 +108,49 @@ docker compose restart
 ```
 
 2. For aaPanel installations, restart the Octane daemon process
+
+## Usage observability
+
+Apply database migrations before enabling `USAGE_ENABLED=true`, or use the
+authenticated admin/MCP `usage/settings/save` operation. Its settings are
+`enabled`, `history_days`, `access_days`, and `identity_days` (retention: 7–730
+days). Saved settings override the environment defaults. Run the normal Laravel
+scheduler: `usage:maintain` aggregates online peaks; `logs:maintain` applies the
+configured retention and storage budgets in bounded batches. No billing counters are reset
+or incremented by the observation ledger.
+
+The user API (`/api/v1/user/usage`) and admin API (`/api/v2/{admin-path}/usage`)
+provide `snapshot`, `events`, `ip`, and `leaderboard`. User scope is enforced by
+the authenticated account. Admin additionally has `online`, `infrastructure`,
+`policy`, `policy/save`, `settings`, and `settings/save`; these are also exposed
+through the existing scoped, audited MCP operation bridge.
+
+- Source identity is **user + canonical IP**, not a physical device ID. Node
+  platform is unknown. Web browser/client hints and subscription User-Agent are
+  inference only and are not used as trusted identity or authorization.
+- Web visits and subscription pulls are recorded individually. Proxy access
+  history records first-seen sources; IP traffic history is separately grouped
+  by user, source IP, node, and hour. Public leaderboard email labels are masked.
+- NIC RX/TX, raw proxy traffic, and rate-adjusted billing observations are
+  separate measurements. NIC counters and process-level counters establish a
+  baseline on first observation. Per-source counters carry an independent
+  generation to prevent duplicate attribution after reporter restarts.
+- Historical buckets have hourly precision (daily display uses UTC+8). Bytes
+  recovered after a reporting gap remain known cumulative bytes, but their
+  precise time distribution is not inferred; gap/unknown/overflow coverage is
+  disclosed. An unreported process crash can lose its last in-memory interval.
+  These records are not a replacement for billing or a provider's quota meter.
+- IP queries are SQL-aggregated and paginated (200 rows per page, 93-day maximum
+  range); source details are limited to 2,000 nodes. Node reports are authenticated,
+  limited to 1 MiB and 2,000 counters/sources, rate-limited, and replay-fenced.
+  A fresh empty snapshot means zero; stale or incomplete collection is unknown.
+- Server quota rules are monthly NIC observation budgets: reset day (clamped
+  to month end), timezone, GiB/TiB limit, RX/TX/both and warning percentage. Saving
+  a rule never deletes history or automatically disconnects users.
+
+Restrict access to these sensitive IP/access records and choose retention
+appropriate to your deployment. Risk observations are prompts for review, not
+automatic proof of subscription/key leakage or grounds for an automatic ban.
 
 ## 🤝 Contributing
 

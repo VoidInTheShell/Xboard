@@ -304,17 +304,19 @@ class MailService
             }
             $error = null;
         } catch (\Exception $e) {
-            Log::error($e);
-            $error = $e->getMessage();
+            $error = \App\Services\Logs\LogRedactor::text($e->getMessage(), 2048);
+            Log::error('Mail delivery failed: ' . $error);
         }
         $log = [
             'email' => $params['email'],
-            'subject' => $params['subject'],
+            'subject' => mb_substr(\App\Services\Logs\LogRedactor::text($renderedSubject ?? $params['subject'],255),0,255),
             'template_name' => $params['template_name'],
             'error' => $error,
-            'config' => config('mail')
         ];
-        MailLog::create($log);
+        // Logging failure must never retry a successfully delivered email.
+        if (\App\Services\Logs\LogSettings::enabled('mail') && \App\Services\Logs\LogBudget::accepts(4096)) {
+            try { MailLog::create($log); } catch (\Throwable) { Log::warning('Mail delivery log could not be stored.'); }
+        }
         return $log;
     }
 

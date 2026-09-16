@@ -5,6 +5,7 @@ namespace Tests\Feature\Mcp;
 use App\Http\Controllers\V2\Admin\McpController;
 use App\Http\Controllers\V2\Admin\NoticeController;
 use App\Models\McpKey;
+use App\Models\Server;
 use App\Models\User;
 use App\Services\AdminOperationCatalog;
 use App\Services\McpKeyService;
@@ -113,6 +114,97 @@ class McpControlPlaneTest extends TestCase
         $this->assertFalse(collect($catalog)->contains(fn(array $item) => str_starts_with($item['path'], 'mcp/')));
     }
 
+    public function test_mcp_can_save_new_theme_controls_and_exposes_logo_upload(): void
+    {
+        $catalog = collect(app(AdminOperationCatalog::class)->operations())->keyBy('id');
+        $this->assertTrue($catalog->has('config.save.post'));
+        $this->assertTrue($catalog->has('config.upload_logo.post'));
+        $this->assertSame('system', $catalog['config.upload_logo.post']['domain']);
+
+        $secret = $this->secretFor();
+        $this->callTool($secret, 'xboard_admin_mutate', [
+            'operation' => 'config.save.post',
+            'expected_change_version' => 0,
+            'parameters' => [
+                'user_login_title' => 'MCP configured title',
+                'user_hidden_menus' => ['/usage'],
+                'user_support_enabled' => false,
+            ],
+        ])->assertOk()
+            ->assertJsonPath('result.isError', false)
+            ->assertJsonPath('result.structuredContent.status', 200);
+
+        $this->assertDatabaseHas('v2_settings', [
+            'name' => 'user_login_title',
+            'value' => 'MCP configured title',
+        ]);
+        $this->assertDatabaseHas('v2_change_event', [
+            'action' => 'config.save.post',
+            'actor_type' => 'mcp',
+        ]);
+    }
+
+    public function test_mcp_exposes_and_saves_fallback_site_configuration(): void
+    {
+        $catalog = collect(app(AdminOperationCatalog::class)->operations())->keyBy('id');
+        $this->assertTrue($catalog->has('server.fallback.templates.get'));
+        $this->assertTrue($catalog->has('server.fallback.upload.post'));
+        $this->assertTrue($catalog->has('server.manage.save.post'));
+        $this->assertSame('infrastructure', $catalog['server.fallback.templates.get']['domain']);
+
+        $node = Server::withoutEvents(fn () => Server::create([
+            'name' => 'MCP fallback test',
+            'type' => 'vless',
+            'host' => 'edge.example.com',
+            'port' => 443,
+            'server_port' => 443,
+            'rate' => 1,
+            'enabled' => false,
+            'show' => true,
+            'group_ids' => [],
+            'protocol_settings' => [
+                'tls' => 1,
+                'server_tls' => 1,
+                'network' => 'tcp',
+                'network_settings' => [],
+                'flow' => '',
+                'tls_settings' => ['server_name' => 'edge.example.com'],
+            ],
+        ]));
+
+        $secret = $this->secretFor();
+        $this->callTool($secret, 'xboard_admin_mutate', [
+            'operation' => 'server.manage.save.post',
+            'expected_change_version' => 0,
+            'parameters' => [
+                'id' => $node->id,
+                'type' => 'vless',
+                'name' => $node->name,
+                'host' => $node->host,
+                'port' => 443,
+                'server_port' => 443,
+                'rate' => 1,
+                'enabled' => false,
+                'show' => 1,
+                'group_ids' => [],
+                'protocol_settings' => $node->protocol_settings,
+                'fallback_site' => [
+                    'enabled' => true,
+                    'mode' => 'proxy',
+                    'upstream' => ['host' => 'service.internal', 'port' => 8080, 'scheme' => 'auto'],
+                ],
+            ],
+        ])->assertOk()
+            ->assertJsonPath('result.isError', false)
+            ->assertJsonPath('result.structuredContent.status', 200);
+
+        $this->assertSame('proxy', $node->fresh()->fallback_site['mode']);
+        $this->assertDatabaseHas('v2_change_event', [
+            'action' => 'server.manage.save.post',
+            'actor_type' => 'mcp',
+        ]);
+    }
+
     public function test_read_and_custom_keys_only_receive_permitted_tools_and_operations(): void
     {
         $readSecret = $this->secretFor('read');
@@ -170,6 +262,39 @@ class McpControlPlaneTest extends TestCase
 
         $this->assertDatabaseMissing('v2_notice', ['title' => 'Must roll back']);
         $this->assertDatabaseCount('v2_change_event', 1);
+    }
+
+    public function test_mcp_preserves_nested_json_for_xray_preflight(): void
+    {
+        $secret = $this->secretFor();
+        $node = Server::withoutEvents(fn () => Server::create([
+            'name' => 'MCP Xray test',
+            'type' => 'vless',
+            'host' => 'localhost',
+            'port' => 18080,
+            'server_port' => 18080,
+            'rate' => 1,
+            'protocol_settings' => [
+                'tls' => 0,
+                'flow' => '',
+                'tls_settings' => [],
+            ],
+        ]));
+
+        $this->callTool($secret, 'xboard_admin_mutate', [
+            'operation' => 'server.xray.validate.post',
+            'expected_change_version' => 0,
+            'parameters' => [
+                'node_id' => $node->id,
+                'expected_revision' => 0,
+                'xray_config' => [
+                    'routing' => ['rules' => []],
+                ],
+            ],
+        ])->assertOk()
+            ->assertJsonPath('result.isError', false)
+            ->assertJsonPath('result.structuredContent.status', 200)
+            ->assertJsonPath('result.structuredContent.body.data.valid', true);
     }
 
     public function test_dangerous_mutation_requires_exact_catalog_confirmation(): void

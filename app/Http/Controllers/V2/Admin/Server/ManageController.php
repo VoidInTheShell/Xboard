@@ -5,9 +5,11 @@ namespace App\Http\Controllers\V2\Admin\Server;
 use App\Exceptions\ApiException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\ServerSave;
+use App\Models\Outbound;
 use App\Models\Server;
 use App\Models\ServerGroup;
 use App\Services\ServerService;
+use App\Services\FallbackSiteService;
 use App\Services\XrayConfigService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -68,6 +70,17 @@ class ManageController extends Controller
             }
         }
 
+        $candidate = new Server();
+        $candidate->fill($params);
+        if (!array_key_exists('fallback_site', $params)
+            && app(FallbackSiteService::class)->supportsDefault($candidate)) {
+            $params['fallback_site'] = FallbackSiteService::defaultConfig();
+            $candidate->fallback_site = $params['fallback_site'];
+        }
+        if (XrayConfigService::supports($candidate)) {
+            $params['xray_config'] = XrayConfigService::defaultNodeConfig();
+            $params['default_outbound_tag'] = 'direct';
+        }
         $this->validateServerCandidate(null, $params);
         try {
             Server::create($params);
@@ -97,6 +110,7 @@ class ManageController extends Controller
             null,
             null,
         );
+        app(FallbackSiteService::class)->validate($candidate);
     }
 
     public function update(Request $request)
@@ -151,6 +165,18 @@ class ManageController extends Controller
         if (!$server) {
             return $this->fail([400202, '服务器不存在']);
         }
+        $dependentOutbounds = Outbound::query()
+            ->where('source_type', Outbound::SOURCE_NODE)
+            ->where('source_node_id', $server->id)
+            ->orderBy('id')
+            ->pluck('name');
+        if ($dependentOutbounds->isNotEmpty()) {
+            XrayConfigService::failAt(
+                'id',
+                '该节点仍被出站引用：' . $dependentOutbounds->take(3)->implode('、') . '。请先修改或删除这些出站。',
+                null,
+            );
+        }
         if ($server->delete() === false) {
             return $this->fail([500, '删除失败']);
         }
@@ -173,6 +199,19 @@ class ManageController extends Controller
         $ids = $request->input('ids');
         if (empty($ids)) {
             return $this->fail([400, '请选择要删除的节点']);
+        }
+
+        $dependentOutbounds = Outbound::query()
+            ->where('source_type', Outbound::SOURCE_NODE)
+            ->whereIn('source_node_id', $ids)
+            ->orderBy('id')
+            ->pluck('name');
+        if ($dependentOutbounds->isNotEmpty()) {
+            XrayConfigService::failAt(
+                'ids',
+                '所选节点仍被出站引用：' . $dependentOutbounds->take(3)->implode('、') . '。请先修改或删除这些出站。',
+                null,
+            );
         }
 
         try {

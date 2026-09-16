@@ -86,10 +86,20 @@ class SelfUseModeTest extends TestCase
 
         $command = $response->json('data.command');
         $this->assertStringContainsString(
-            'https://raw.githubusercontent.com/VoidInTheShell/Xboard-Node/dev/install.sh',
+            'https://github.com/VoidInTheShell/Xboard-Node/releases/latest/download/install.sh',
             $command
         );
         $this->assertStringNotContainsString('cedar2025/xboard-node', $command);
+
+        $version = 'v1.14.0-dev.1234.1';
+        $pinned = $this->getJson(
+            $this->routePath(MachineController::class . '@installCommand') . '?id=' . $machine->id . '&version=' . $version
+        )->assertOk()->json('data.command');
+        $this->assertStringContainsString(
+            'https://github.com/VoidInTheShell/Xboard-Node/releases/download/' . $version . '/install.sh',
+            $pinned
+        );
+        $this->assertStringNotContainsString('/releases/latest/', $pinned);
     }
 
     private function makeUser(array $attributes = []): User

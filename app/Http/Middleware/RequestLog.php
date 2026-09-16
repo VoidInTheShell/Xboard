@@ -2,8 +2,6 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\AdminAuditLog;
-use App\Models\McpKey;
 use App\Exceptions\ChangeVersionConflictException;
 use App\Services\AdminOperationCatalog;
 use App\Services\ChangeEventService;
@@ -35,9 +33,7 @@ class RequestLog
 
     public function handle($request, Closure $next)
     {
-        if ($request->method() !== 'POST') {
-            return $next($request);
-        }
+        if ($request->method() !== 'POST' && !\App\Services\Logs\LogSettings::get()['auditReads']) return $next($request);
 
         $operation = app(AdminOperationCatalog::class)->describeRequest($request);
         $isMutation = $operation !== null && !$operation['read_only'];
@@ -62,25 +58,13 @@ class RequestLog
             $successful = $response->getStatusCode() >= 200 && $response->getStatusCode() < 300;
             if (!$successful) {
                 $this->finishTransaction($isMutation, $initialTransactionLevel, false);
+                \App\Services\Logs\AuditWriter::attempt($request,$operation['id'] ?? $this->resolveAction($request->path()),$response->getStatusCode());
                 return $response;
             }
 
-            $mcpKey = $request->attributes->get('mcp_key');
             $changeEvents = app(ChangeEventService::class);
-            AdminAuditLog::query()->create([
-                'admin_id' => $admin->id,
-                'actor_type' => $mcpKey instanceof McpKey ? 'mcp' : 'admin',
-                'mcp_key_id' => $mcpKey instanceof McpKey ? $mcpKey->id : null,
-                'request_id' => $changeEvents->requestId($request),
-                'client_id' => $mcpKey instanceof McpKey ? null : $this->clientId($request),
-                'action' => $operation['id'] ?? $this->resolveAction($request->path()),
-                'method' => $request->method(),
-                'uri' => $request->getRequestUri(),
-                'request_data' => json_encode(self::redactRequestData($request->all()), JSON_UNESCAPED_UNICODE),
-                'ip' => $request->getClientIp(),
-                'created_at' => time(),
-                'updated_at' => time(),
-            ]);
+            /* AuditWriter applies collection policy and bounded redaction. */
+            \App\Services\Logs\AuditWriter::write($request,$operation['id'] ?? $this->resolveAction($request->path()),$response->getStatusCode());
 
             if ($isMutation) {
                 $changeEvents->commitMutation($request, $operation);
@@ -90,6 +74,7 @@ class RequestLog
             return $response;
         } catch (ChangeVersionConflictException $e) {
             $this->finishTransaction($isMutation, $initialTransactionLevel, false);
+            \App\Services\Logs\AuditWriter::attempt($request,$operation['id'] ?? $this->resolveAction($request->path()),409);
             return response()->json([
                 'status' => 'fail',
                 'message' => $e->getMessage(),
@@ -100,6 +85,8 @@ class RequestLog
             ], 409);
         } catch (\Throwable $e) {
             $this->finishTransaction($isMutation, $initialTransactionLevel, false);
+            $status=$e instanceof \Illuminate\Validation\ValidationException ? 422 : ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface ? $e->getStatusCode() : 500);
+            \App\Services\Logs\AuditWriter::attempt($request,$operation['id'] ?? $this->resolveAction($request->path()),$status);
             if (!isset($response)) {
                 throw $e;
             }
@@ -127,12 +114,6 @@ class RequestLog
         } else {
             DB::rollBack();
         }
-    }
-
-    private function clientId($request): ?string
-    {
-        $value = $request->header('X-Xboard-Admin-Client-Id');
-        return is_string($value) && preg_match('/^[A-Za-z0-9_-]{1,64}$/', $value) ? $value : null;
     }
 
     private function resolveAction(string $path): string

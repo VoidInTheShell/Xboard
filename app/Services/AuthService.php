@@ -27,6 +27,17 @@ class AuthService
         // Format token: remove ID prefix and add Bearer
         $tokenParts = explode('|', $token->plainTextToken);
         $formattedToken = 'Bearer ' . ($tokenParts[1] ?? $tokenParts[0]);
+        if (\App\Services\Logs\LogSettings::get()['auditLogin']) {
+            \App\Services\Logs\AuditWriter::attempt(request(),'auth.login',200,$this->user);
+        }
+
+        try {
+            app(\App\Services\Usage\UsageAccessService::class)->record(
+                request(), $this->user->id, 'panel', '登录', '成功'
+            );
+        } catch (\Throwable) {
+            \Illuminate\Support\Facades\Log::warning('Usage login recording failed');
+        }
 
         return [
             'token' => $this->user->token,

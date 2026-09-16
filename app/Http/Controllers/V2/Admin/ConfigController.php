@@ -10,6 +10,7 @@ use App\Services\TelegramService;
 use App\Services\ThemeService;
 use App\Utils\Dict;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class ConfigController extends Controller
 {
@@ -138,6 +139,18 @@ class ConfigController extends Controller
                 'frontend_theme_color' => admin_setting('frontend_theme_color', 'default'),
                 'frontend_background_url' => admin_setting('frontend_background_url'),
                 'self_use_mode' => (bool) admin_setting('self_use_mode', 0),
+                'user_login_title' => admin_setting('user_login_title'),
+                'user_login_description' => admin_setting('user_login_description'),
+                'user_hidden_menus' => (array) admin_setting('user_hidden_menus', []),
+                'admin_hidden_menus' => (array) admin_setting('admin_hidden_menus', []),
+                'user_support_enabled' => (bool) admin_setting('user_support_enabled', 1),
+                'user_support_description' => admin_setting('user_support_description'),
+                'user_support_telegram_label' => admin_setting('user_support_telegram_label'),
+                'user_support_telegram_url' => admin_setting('user_support_telegram_url'),
+                'user_support_group_label' => admin_setting('user_support_group_label'),
+                'user_support_group_url' => admin_setting('user_support_group_url'),
+                'user_support_ticket_enabled' => (bool) admin_setting('user_support_ticket_enabled', 1),
+                'user_support_knowledge_enabled' => (bool) admin_setting('user_support_knowledge_enabled', 1),
             ],
             'server' => [
                 'server_token' => admin_setting('server_token'),
@@ -235,6 +248,35 @@ class ConfigController extends Controller
         }
 
         return $this->success(true);
+    }
+
+    public function uploadLogo(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimetypes:image/png|max:2048|dimensions:width=256,height=256',
+        ], [
+            'file.mimetypes' => '站点 Logo 必须为 PNG 图片',
+            'file.dimensions' => '站点 Logo 必须为 256 × 256 像素',
+            'file.max' => '站点 Logo 不能超过 2 MB',
+        ]);
+
+        $file = $request->file('file');
+        $filename = 'logo-' . substr(hash_file('sha256', $file->getRealPath()), 0, 16) . '.png';
+        $path = Storage::disk('public')->putFileAs('site-branding', $file, $filename);
+        if (!$path) {
+            return $this->fail([500, '站点 Logo 上传失败']);
+        }
+
+        $previous = admin_setting('logo');
+        $previousPath = is_string($previous) ? parse_url($previous, PHP_URL_PATH) : null;
+        if (is_string($previousPath) && str_starts_with($previousPath, '/storage/site-branding/')) {
+            $managedPath = substr($previousPath, strlen('/storage/'));
+            if ($managedPath !== $path) {
+                Storage::disk('public')->delete($managedPath);
+            }
+        }
+
+        return $this->success(['url' => url(Storage::disk('public')->url($path))]);
     }
 
     /**

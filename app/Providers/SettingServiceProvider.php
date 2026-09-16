@@ -28,6 +28,9 @@ class SettingServiceProvider extends ServiceProvider
      */
     public function boot()
     {
+        \App\Services\Logs\LogSettings::forget();
+        $this->app->extend('queue.failer',fn($provider)=>new \App\Services\Logs\LogFailedJobProvider($provider));
+        $this->app->singleton(\Laravel\Horizon\Contracts\JobRepository::class,\App\Services\Logs\LogHorizonRepository::class);
         // App URL is forced per-request via middleware (Octane-safe).
     }
 }

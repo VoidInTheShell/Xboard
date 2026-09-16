@@ -8,9 +8,17 @@
 #                  └─→ ws-server  (WebSocket)   /api/v2/server/ws → :8076
 #   horizon      (queue worker, no public port)
 #   redis        (state)
+# Container output is separate from the mounted panel log budget.
+x-container-logging: &container-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   caddy:
     image: caddy:2-alpine
+    logging: *container-logging
     restart: unless-stopped
     ports:
       - "7001:7001"
@@ -21,7 +29,8 @@ services:
       - ./.docker/caddy/Caddyfile.split:/etc/caddy/Caddyfile:ro
 
   web:
-    image: ghcr.io/cedar2025/xboard:latest
+    image: ghcr.io/voidintheshell/xboard:${XBOARD_VERSION:?Set XBOARD_VERSION to a published build or release tag}
+    logging: *container-logging
     restart: unless-stopped
     depends_on:
       - redis
@@ -38,7 +47,8 @@ services:
       ENABLE_WS_SERVER: "false"
 
   horizon:
-    image: ghcr.io/cedar2025/xboard:latest
+    image: ghcr.io/voidintheshell/xboard:${XBOARD_VERSION:?Set XBOARD_VERSION to a published build or release tag}
+    logging: *container-logging
     restart: unless-stopped
     depends_on:
       - redis
@@ -50,7 +60,8 @@ services:
       ENABLE_WS_SERVER: "false"
 
   ws-server:
-    image: ghcr.io/cedar2025/xboard:latest
+    image: ghcr.io/voidintheshell/xboard:${XBOARD_VERSION:?Set XBOARD_VERSION to a published build or release tag}
+    logging: *container-logging
     restart: unless-stopped
     depends_on:
       - redis
@@ -64,6 +75,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    logging: *container-logging
     restart: unless-stopped
     command: redis-server --unixsocket /data/redis.sock --unixsocketperm 777 --save 900 1 --save 300 10 --save 60 10000
     volumes:

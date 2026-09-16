@@ -18,6 +18,7 @@ class ServerRoute
         ], function ($route) {
             $route->match(['GET', 'POST'], 'handshake', [ServerController::class, 'handshake']);
             $route->post('report', [ServerController::class, 'report']);
+            $route->post('usage', [\App\Http\Controllers\V2\Server\UsageController::class, 'node']);
             $route->get('config', [UniProxyController::class, 'config']);
             $route->get('user', [UniProxyController::class, 'user']);
             $route->post('push', [UniProxyController::class, 'push']);
@@ -31,6 +32,7 @@ class ServerRoute
         ], function ($route) {
             $route->post('nodes', [MachineController::class, 'nodes']);
             $route->post('status', [MachineController::class, 'status']);
+            $route->post('usage', [\App\Http\Controllers\V2\Server\UsageController::class, 'machine']);
         });
     }
 }

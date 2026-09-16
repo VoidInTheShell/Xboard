@@ -14,7 +14,7 @@ class NodeResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        return [
+        $data = [
             'id' => $this['id'],
             'type' => $this['type'],
             'version' => $this['version'] ?? null,
@@ -25,5 +25,10 @@ class NodeResource extends JsonResource
             'cache_key' => $this['cache_key'],
             'last_check_at' => $this['last_check_at']
         ];
+        if (array_key_exists('machine_traffic', $this->resource)) {
+            $data['machine_traffic'] = $this['machine_traffic'];
+        }
+
+        return $data;
     }
 }

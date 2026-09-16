@@ -8,9 +8,17 @@
 #
 # For aaPanel native (openresty on host) users that prefer host networking:
 # use compose.host.sample.yaml.
+# Container output is separate from the mounted panel log budget.
+x-container-logging: &container-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   xboard:
-    image: ghcr.io/cedar2025/xboard:latest
+    image: ghcr.io/voidintheshell/xboard:${XBOARD_VERSION:?Set XBOARD_VERSION to a published build or release tag}
+    logging: *container-logging
     restart: unless-stopped
     ports:
       - "7001:7001"

@@ -39,18 +39,29 @@ class AdminOperationBridge
             admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))
         ), '/') . '/' . $this->fillPath($operation['path'], $pathParameters);
 
+        $method = strtoupper((string) $operation['method']);
+        $usesJsonBody = $uploadedFiles === [] && !in_array($method, ['GET', 'HEAD'], true);
         $server = [
             'REMOTE_ADDR' => $parentRequest->getClientIp() ?: '127.0.0.1',
             'HTTP_USER_AGENT' => $parentRequest->userAgent() ?: 'Xboard MCP',
             'HTTP_ACCEPT' => 'application/json, text/plain, application/octet-stream',
         ];
+        $content = null;
+        if ($usesJsonBody) {
+            $server['CONTENT_TYPE'] = 'application/json';
+            $content = json_encode(
+                $parameters,
+                JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+            );
+        }
         $subRequest = Request::create(
             $uri,
-            $operation['method'],
-            $parameters,
+            $method,
+            $usesJsonBody ? [] : $parameters,
             [],
             $uploadedFiles,
-            $server
+            $server,
+            $content,
         );
         $subRequest->attributes->set('mcp_key', $key);
         $subRequest->attributes->set('mcp_admin', $key->owner);

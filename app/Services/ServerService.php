@@ -224,6 +224,9 @@ class ServerService
      */
     public static function updateMetrics(Server $node, array $metrics): void
     {
+        if (is_array($metrics['rule_files'] ?? null)) {
+            app(XrayRuleFileService::class)->recordReportedState($node, $metrics['rule_files']);
+        }
         if (is_array($metrics['config_apply'] ?? null)) {
             $reported = $metrics['config_apply'];
             $report = [];
@@ -250,7 +253,7 @@ class ServerService
             }
             $report = array_filter($report, static fn ($value) => $value !== null);
             $report['reported_at'] = now()->timestamp;
-            Cache::put("xray_config_apply:{$node->id}", $report, 86400);
+            Cache::put("xray_config_apply:{$node->id}", $report, \App\Services\Logs\LogSettings::get()['appliedHours'] * 3600);
             // Keep the last real node acknowledgement with the desired
             // configuration. This is intentionally a narrow allow-list, so
             // metrics or credentials cannot become part of the application
@@ -443,11 +446,17 @@ class ServerService
         }
 
         if (XrayConfigService::supports($node) && ($node->xray_config !== null || $node->outbound_bindings !== null || ($node->machine_id && $node->machine?->xray_config !== null))) {
-            $native = XrayConfigService::effective($node);
+            $ruleFiles = app(XrayRuleFileService::class)->desired($node);
+            $native = XrayConfigService::runtime($node);
             $response['kernel_type'] = 'xray';
             $response['xray_config'] = $native;
             $response['config_revision'] = (int) ($node->config_revision ?? 0);
             $response['config_hash'] = XrayConfigService::hash($native);
+            $response['rule_files'] = $ruleFiles;
+        }
+
+        if ($fallbackSite = app(FallbackSiteService::class)->resolve($node)) {
+            $response['fallback_site'] = $fallbackSite;
         }
 
         return $response;

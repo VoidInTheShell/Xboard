@@ -3,6 +3,7 @@
 namespace Tests\Feature\Server;
 
 use App\Http\Controllers\V2\Admin\Server\XrayController;
+use App\Http\Controllers\V2\Admin\Server\RuleFileController;
 use App\Models\Outbound;
 use App\Models\Server;
 use App\Models\ServerMachine;
@@ -15,6 +16,7 @@ use App\WebSocket\NodeWorker;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -57,6 +59,128 @@ class XrayControlTest extends TestCase
         $this->fail('Route missing: ' . $action);
     }
 
+    private function ruleFilePath(string $action): string
+    {
+        foreach ($this->app['router']->getRoutes() as $route) {
+            if ($route->getActionName() === RuleFileController::class . '@' . $action) return '/' . $route->uri();
+        }
+        $this->fail('Rule file route missing: ' . $action);
+    }
+
+    public function test_default_rules_are_visible_but_only_enabled_runtime_rules_are_sent(): void
+    {
+        $node = $this->node();
+        $config = XrayConfigService::defaultNodeConfig();
+        $config->routing->rules[] = (object) [
+            'type' => 'field',
+            'outboundTag' => 'direct',
+        ];
+        $node->xray_config = $config;
+        $node->saveQuietly();
+
+        $snapshot = XrayConfigService::snapshot($node->fresh());
+        // Legacy panels stored a matchless direct row as the default route.
+        // It is omitted from the editable projection and replaced in the
+        // runtime payload by an explicit final tcp/udp catch-all.
+        $this->assertCount(3, $snapshot['effective_config']->routing->rules);
+        $this->assertSame('api', $snapshot['effective_config']->routing->rules[0]->outboundTag);
+        $this->assertSame('direct', $snapshot['default_outbound_tag']);
+        $this->assertSame('direct', $snapshot['effective_config']->outbounds[0]->tag);
+
+        $node = $node->fresh();
+        $config = $node->xray_config;
+        $config->routing->rules[0]->enabled = false;
+        $config->routing->rules[] = $config->routing->rules[0];
+        $node->xray_config = $config;
+        $canonical = XrayConfigService::effective($node);
+        $this->assertTrue($canonical->routing->rules[0]->enabled);
+        $this->assertSame(['api'], $canonical->routing->rules[0]->inboundTag);
+        $this->assertCount(3, $canonical->routing->rules);
+
+        $config = $node->xray_config;
+        $config->routing->rules[1]->enabled = false;
+        $node->xray_config = $config;
+        $runtime = XrayConfigService::runtime($node);
+        $this->assertCount(2, $runtime->routing->rules);
+        $this->assertSame('geosite:cn', $runtime->routing->rules[0]->domain[0]);
+        $this->assertObjectNotHasProperty('enabled', $runtime->routing->rules[0]);
+        $this->assertSame('tcp,udp', $runtime->routing->rules[1]->network);
+        $this->assertSame('direct', $runtime->routing->rules[1]->outboundTag);
+    }
+
+    public function test_quick_import_supports_subscription_vless_and_proxy_pool_links(): void
+    {
+        $this->admin();
+        $uuid = (string) Str::uuid();
+        $subscription = implode("\n", [
+            "vless://{$uuid}@edge.example.com:443?security=tls&type=ws&path=%2Fws#Edge-VLESS",
+            'socks5://user:passwd@203.0.113.10:1080#Pool-SOCKS',
+            'http://proxy:secret@198.51.100.20:8080#Pool-HTTP',
+            '203.0.113.11:3128:pool-user:pool-pass',
+        ]);
+        Http::fake(['https://1.1.1.1/sub' => Http::response(base64_encode($subscription), 200)]);
+
+        $data = $this->postJson($this->path('importOutbounds'), [
+            'source' => 'https://1.1.1.1/sub',
+        ])->assertOk()->json('data');
+        $this->assertCount(4, $data['imported'], json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $this->assertSame([], $data['skipped']);
+        $this->assertSame(['vless', 'socks', 'http', 'http'], array_column($data['imported'], 'protocol'));
+        $this->assertCount(4, Outbound::query()->get());
+
+        $this->postJson($this->path('importOutbounds'), [
+            'source' => 'http://127.0.0.1/private-subscription',
+        ])->assertStatus(422)->assertJsonValidationErrors('source');
+    }
+
+    public function test_rule_file_endpoints_seed_manage_and_report_files(): void
+    {
+        $this->admin();
+        $node = $this->node();
+        $node->xray_config = (object) [];
+        $node->saveQuietly();
+
+        $files = $this->getJson($this->ruleFilePath('fetch') . '?node_id=' . $node->id)
+            ->assertOk()->json('data.files');
+        $this->assertSame(['geoip.dat', 'geosite.dat'], array_column($files, 'name'));
+        $this->assertTrue($files[0]['built_in']);
+
+        $created = $this->postJson($this->ruleFilePath('save'), [
+            'node_id' => $node->id,
+            'name' => 'custom-geosite.dat',
+            'source' => 'remote',
+            'url' => 'https://1.1.1.1/custom-geosite.dat',
+            'auto_update' => true,
+            'update_interval_hours' => 12,
+        ])->assertOk()->json('data');
+        $this->assertFalse($created['built_in']);
+
+        $wire = ServerService::buildNodeConfig($node->fresh());
+        $this->assertCount(3, $wire['rule_files']);
+        $this->assertSame('custom-geosite.dat', $wire['rule_files'][2]['name']);
+
+        \App\Models\XrayRuleFile::query()->whereKey($created['id'])->update([
+            'status' => 'failed', 'error' => 'previous failure',
+        ]);
+        ServerService::updateMetrics($node->fresh(), ['rule_files' => [[
+            'id' => $created['id'], 'size' => 2048, 'updated_at' => 1_725_000_000,
+            'status' => 'ready',
+        ]]]);
+        $updated = $this->getJson($this->ruleFilePath('fetch') . '?node_id=' . $node->id)
+            ->assertOk()->json('data.files.2');
+        $this->assertSame(2048, $updated['size']);
+        $this->assertNotNull($updated['updated_at']);
+        $this->assertNull($updated['error']);
+
+        $this->postJson($this->ruleFilePath('download'), [
+            'node_id' => $node->id, 'id' => $created['id'],
+        ])->assertOk();
+        $this->postJson($this->ruleFilePath('drop'), [
+            'node_id' => $node->id, 'id' => $created['id'],
+        ])->assertOk();
+        $this->assertDatabaseMissing('v2_xray_rule_file', ['id' => $created['id']]);
+    }
+
     public function test_native_configuration_round_trips_and_reaches_node_with_revision(): void
     {
         $this->admin();
@@ -68,13 +192,18 @@ class XrayControlTest extends TestCase
         $this->assertSame('xray', $wire['kernel_type']);
         $this->assertSame(1, $wire['config_revision']);
         $this->assertSame($result['config_hash'], $wire['config_hash']);
-        $this->assertSame('edge', $wire['xray_config']->outbounds[0]->tag);
-        $this->assertSame('direct', $wire['xray_config']->outbounds[1]->tag);
+        $this->assertSame('direct', $wire['xray_config']->outbounds[0]->tag);
+        $this->assertSame('edge', $wire['xray_config']->outbounds[1]->tag);
         $this->assertSame('block', $wire['xray_config']->outbounds[2]->tag);
         $this->assertIsInt($result['config_revision']);
         $this->assertSame('vless-in', $result['managed_inbound']['tag']);
         $this->assertSame('0.0.0.0', $result['managed_inbound']['listen']);
-        $this->postJson($this->path('save'), ['node_id' => $node->id, 'xray_config' => $config, 'expected_revision' => 0])->assertStatus(422);
+        $this->postJson($this->path('save'), [
+            'node_id' => $node->id,
+            'xray_config' => $config,
+            'expected_revision' => 0,
+        ])->assertStatus(422)
+            ->assertJsonPath('errors.expected_revision.0', '配置版本已变化，请重新加载后再保存。');
     }
 
     public function test_vless_parameter_generation_is_admin_only_paired_and_not_cached(): void
@@ -145,12 +274,12 @@ class XrayControlTest extends TestCase
         $this->postJson($this->path('save'), [
             'node_id' => $node->id, 'xray_config' => (object) [],
             'outbound_bindings' => [['outbound_id' => $candidate['id'], 'tag' => 'local-edge']],
-        ])->assertOk()->assertJsonPath('data.effective_config.outbounds.0.tag', 'local-edge');
+        ])->assertOk()->assertJsonPath('data.effective_config.outbounds.0.tag', 'direct');
         $this->postJson($this->path('saveOutbound'), [
             'id' => $candidate['id'], 'name' => 'Shared exit', 'config' => json_decode('{"tag":"candidate","protocol":"freedom","settings":{"domainStrategy":"UseIP"}}'),
         ])->assertOk();
         $this->assertSame(2, $node->fresh()->config_revision);
-        $this->assertSame('UseIP', XrayConfigService::effective($node->fresh())->outbounds[0]->settings->domainStrategy);
+        $this->assertSame('UseIP', XrayConfigService::effective($node->fresh())->outbounds[1]->settings->domainStrategy);
         $this->postJson($this->path('dropOutbound'), ['id' => $candidate['id']])->assertStatus(422);
     }
 
@@ -182,8 +311,8 @@ class XrayControlTest extends TestCase
         $this->assertSame(1, (int) $source->fresh()->config_revision);
         $this->assertSame($targetRevision + 1, (int) $target->fresh()->config_revision);
         $effective = XrayConfigService::effective($target->fresh());
-        $this->assertSame('source-new.example.test', $effective->outbounds[0]->settings->vnext[0]->address);
-        $this->assertSame(18081, $effective->outbounds[0]->settings->vnext[0]->port);
+        $this->assertSame('source-new.example.test', $effective->outbounds[1]->settings->vnext[0]->address);
+        $this->assertSame(18081, $effective->outbounds[1]->settings->vnext[0]->port);
     }
 
     public function test_route_definition_changes_advance_affected_node_revision(): void
@@ -329,6 +458,50 @@ class XrayControlTest extends TestCase
         $this->assertStringContainsString('security=tls', $link);
     }
 
+    public function test_reverse_proxy_tls_is_preserved_for_subscriptions_and_source_outbounds(): void
+    {
+        $this->admin();
+        $source = $this->node();
+        $source->forceFill([
+            'host' => 'edge.example.test', 'port' => 443, 'server_port' => 30080,
+            'protocol_settings' => [
+                'tls' => 1, 'server_tls' => 0,
+                'tls_settings' => ['server_name' => 'edge.example.test', 'allow_insecure' => false],
+                'network' => 'xhttp', 'network_settings' => ['path' => '/edge'],
+            ],
+            'xray_config' => json_decode('{"dns":{"servers":["1.1.1.1"]}}'),
+        ])->saveQuietly();
+
+        $projected = XrayConfigService::projectedProtocolSettings($source->fresh());
+        $this->assertSame(1, $projected['tls']);
+        $this->assertSame(0, $projected['server_tls']);
+        $this->assertSame(0, ServerService::buildNodeConfig($source->fresh())['tls']);
+        $proxy = \App\Protocols\ClashMeta::buildVless((string) Str::uuid(), [
+            ...$source->toArray(), 'protocol_settings' => $projected,
+        ]);
+        $this->assertTrue($proxy['tls']);
+        $this->assertSame('edge.example.test', $proxy['servername']);
+        $this->assertFalse($proxy['skip-cert-verify']);
+        $this->assertSame('/edge', $proxy['xhttp-opts']['path']);
+        $this->assertSame(1, $source->fresh()->protocol_settings['tls']);
+
+        $candidate = $this->postJson($this->path('saveOutbound'), [
+            'name' => 'Public TLS source', 'source_type' => 'server',
+            'source_node_id' => $source->id, 'resolution_mode' => 'live',
+            'service_credential' => ['uuid' => (string) Str::uuid()],
+        ])->assertOk()->json('data');
+        $target = $this->node();
+        $this->postJson($this->path('bindings'), [
+            'node_id' => $target->id,
+            'outbound_bindings' => [['outbound_id' => $candidate['id'], 'tag' => 'edge']],
+            'expected_revision' => 0,
+        ])->assertOk();
+        $outbound = XrayConfigService::effective($target->fresh())->outbounds[1];
+        $this->assertSame('tls', $outbound->streamSettings->security);
+        $this->assertSame('edge.example.test', $outbound->streamSettings->tlsSettings->serverName);
+        $this->assertSame(443, $outbound->settings->vnext[0]->port);
+    }
+
     public function test_hysteria_and_shadowsocks_managed_baselines_match_node_builders(): void
     {
         $this->admin();
@@ -404,9 +577,25 @@ class XrayControlTest extends TestCase
             'outbound_bindings' => [['outbound_id' => $copy['id'], 'tag' => 'remote-edge']],
             'expected_revision' => 0,
         ])->assertOk()->json('data');
-        $this->assertSame('remote-edge', $saved['effective_config']['outbounds'][0]['tag']);
+        $this->assertSame('direct', $saved['effective_config']['outbounds'][0]['tag']);
+        $this->postJson($this->path('bindings'), [
+            'node_id' => $target->id,
+            'outbound_bindings' => [['outbound_id' => $copy['id'], 'tag' => 'remote-edge']],
+            'expected_revision' => 0,
+        ])->assertStatus(422)
+            ->assertJsonPath('errors.expected_revision.0', '配置版本已变化，请重新加载后再修改出站绑定。');
         $this->getJson($this->path('bindings') . '?node_id=' . $target->id)
-            ->assertOk()->assertJsonPath('data.default_outbound_tag', 'remote-edge');
+            ->assertOk()->assertJsonPath('data.default_outbound_tag', 'direct');
+        $selected = $this->postJson($this->path('defaultOutbound'), [
+            'node_id' => $target->id,
+            'default_outbound_tag' => 'remote-edge',
+            'expected_revision' => $saved['config_revision'],
+        ])->assertOk()->json('data');
+        $this->assertSame('remote-edge', $selected['default_outbound_tag']);
+        $this->assertSame('remote-edge', $selected['effective_config']['outbounds'][0]['tag']);
+        $wire = ServerService::buildNodeConfig($target->fresh());
+        $this->assertSame('tcp,udp', $wire['xray_config']->routing->rules[array_key_last($wire['xray_config']->routing->rules)]->network);
+        $this->assertSame('remote-edge', $wire['xray_config']->routing->rules[array_key_last($wire['xray_config']->routing->rules)]->outboundTag);
         $this->getJson($this->path('snapshot') . '?id=' . $copy['id'])
             ->assertOk()->assertJsonPath('data.source_snapshot.source_node_id', $source->id);
     }
@@ -793,9 +982,9 @@ class XrayControlTest extends TestCase
         ])->assertOk();
         $source->update(['host' => 'source-live.example.test', 'port' => 18081, 'server_port' => 18081]);
         $effective = XrayConfigService::effective($target->fresh());
-        $this->assertSame('source-live.example.test', $effective->outbounds[0]->settings->vnext[0]->address);
-        $this->assertSame('/kept', $effective->outbounds[0]->streamSettings->wsSettings->path);
-        $this->assertTrue($effective->outbounds[0]->mux->enabled);
+        $this->assertSame('source-live.example.test', $effective->outbounds[1]->settings->vnext[0]->address);
+        $this->assertSame('/kept', $effective->outbounds[1]->streamSettings->wsSettings->path);
+        $this->assertTrue($effective->outbounds[1]->mux->enabled);
 
         $this->postJson($this->path('saveOutbound'), [
             'id' => $candidate['id'], 'name' => 'Live patched source',
@@ -1058,6 +1247,27 @@ class XrayControlTest extends TestCase
         $this->assertSame(0, (int) ($node->fresh()->config_revision ?? 0));
     }
 
+    public function test_node_delete_reports_outbound_references_before_removal(): void
+    {
+        $this->admin();
+        $node = $this->node();
+        $outbound = Outbound::create([
+            'name' => 'Referenced node exit',
+            'config' => (object) ['tag' => 'source-exit', 'protocol' => 'freedom', 'settings' => (object) []],
+            'source_type' => Outbound::SOURCE_NODE,
+            'source_node_id' => $node->id,
+        ]);
+
+        $this->postJson($this->manageDropPath(), ['id' => $node->id])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('id');
+        $this->assertDatabaseHas('v2_server', ['id' => $node->id]);
+
+        $outbound->delete();
+        $this->postJson($this->manageDropPath(), ['id' => $node->id])->assertOk();
+        $this->assertDatabaseMissing('v2_server', ['id' => $node->id]);
+    }
+
     private function machinePath(): string
     {
         foreach ($this->app['router']->getRoutes() as $route) {
@@ -1086,5 +1296,15 @@ class XrayControlTest extends TestCase
             }
         }
         $this->fail('Route missing: server update');
+    }
+
+    private function manageDropPath(): string
+    {
+        foreach ($this->app['router']->getRoutes() as $route) {
+            if ($route->getActionName() === \App\Http\Controllers\V2\Admin\Server\ManageController::class . '@drop') {
+                return '/' . $route->uri();
+            }
+        }
+        $this->fail('Route missing: server drop');
     }
 }

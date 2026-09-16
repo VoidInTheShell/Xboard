@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\File;
 class UpdateService
 {
     const UPDATE_CHECK_INTERVAL = 86400; // 24 hours
-    const GITHUB_API_URL = 'https://api.github.com/repos/cedar2025/xboard/commits';
+    const GITHUB_API_URL = 'https://api.github.com/repos/VoidInTheShell/Xboard/commits';
     const CACHE_UPDATE_INFO = 'UPDATE_INFO';
     const CACHE_LAST_CHECK = 'LAST_UPDATE_CHECK';
     const CACHE_UPDATE_LOCK = 'UPDATE_LOCK';
@@ -455,4 +455,4 @@ class UpdateService
             return [];
         }
     }
-} 
+}

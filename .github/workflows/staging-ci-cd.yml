@@ -796,7 +796,10 @@ jobs:
 
   release:
     name: Publish complete version
-    needs: [prepare-release, build-and-push, compose-smoke]
+    # Compose acceptance is intentionally explicit test-environment work and
+    # is not an automatic dev-publication dependency.  Keep release gated by
+    # the frozen plan and the published image only.
+    needs: [prepare-release, build-and-push]
     if: needs.prepare-release.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:

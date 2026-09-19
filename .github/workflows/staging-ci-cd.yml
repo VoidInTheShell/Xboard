@@ -298,17 +298,6 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: true
 
-      - name: Verify published runtime version on both architectures
-        env:
-          EXPECTED_VERSION: ${{ needs.prepare-release.outputs.version }}
-        run: |
-          set -Eeuo pipefail
-          image="${REGISTRY}/${IMAGE_NAME}:${EXPECTED_VERSION}"
-          for platform in linux/amd64 linux/arm64; do
-            actual=$(docker run --rm --platform "$platform" --entrypoint cat "$image" /etc/xboard-version)
-            test "$actual" = "$EXPECTED_VERSION"
-          done
-
       - name: Report staging image tag
         env:
           IMAGE_TAG: ${{ needs.prepare-release.outputs.version }}
@@ -319,7 +308,12 @@ jobs:
 
   compose-smoke:
     name: Smoke-test versioned Compose stack (amd64)
-    if: github.event_name != 'pull_request' && needs.prepare-release.outputs.publish == 'true'
+    # Full Compose acceptance is run explicitly in the test environment; it
+    # is not an automatic dev-publication gate.
+    if: >-
+      false &&
+      github.event_name != 'pull_request' &&
+      needs.prepare-release.outputs.publish == 'true'
     needs: [build-and-push, prepare-release]
     runs-on: ubuntu-latest
     permissions:

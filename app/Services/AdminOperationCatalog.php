@@ -36,13 +36,13 @@ class AdminOperationCatalog
     private const READ_ACTIONS = [
         'fetch', 'get', 'list', 'detail', 'history', 'logs', 'stats', 'statistics',
         'types', 'templates', 'codes', 'usages', 'snapshot', 'nodes', 'bindings',
-        'machine', 'installcommand',
+        'machine',
     ];
 
     private const DANGEROUS_ACTIONS = [
-        'drop', 'delete', 'destroy', 'batchdelete', 'resettoken', 'resetsecret',
+        'drop', 'delete', 'destroy', 'batchdelete', 'resettoken', 'resetsecret', 'renew',
         'resettraffic', 'batchresettraffic', 'reset-user', 'paid', 'cancel', 'ban',
-        'sendmail', 'testsendmail', 'upload', 'install', 'uninstall', 'enable',
+        'sendmail', 'testsendmail', 'upload', 'install', 'installcommand', 'uninstall', 'enable',
         'disable', 'upgrade', 'revoke', 'rotate',
     ];
 
@@ -125,8 +125,14 @@ class AdminOperationCatalog
         $root = $segments[0] ?? 'system';
         $domain = self::DOMAIN_MAP[$root] ?? 'system';
         $actionSegment = strtolower((string) end($segments));
-        $readOnly = $method === 'GET' || $this->isReadAction($actionSegment);
-        $dangerous = !$readOnly && ($this->isDangerousAction($actionSegment) || $path === 'update/tasks');
+        $readOnly = $method === 'GET'
+            || $this->isReadAction($actionSegment)
+            || $path === 'server/certificate/validate';
+        $dangerous = !$readOnly && (
+            $this->isDangerousAction($actionSegment)
+            || $path === 'update/tasks'
+            || in_array($path, ['server/certificate/save', 'server/certificate/renew', 'server/certificate/drop'], true)
+        );
         preg_match_all('/\{([^}]+)\}/', $path, $pathMatches);
 
         return [

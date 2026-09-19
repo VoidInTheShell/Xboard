@@ -23,30 +23,47 @@ Xboard is a modern panel system built on Laravel 11, focusing on providing a cle
 
 ## 🚀 Quick Start
 
-```bash
+~~~bash
 git clone -b dev --depth 1 https://github.com/VoidInTheShell/Xboard
 cd Xboard
 cp compose.sample.yaml compose.yaml
-read -r -p 'Published Xboard version tag (build-<run>-<attempt> or release tag): ' XBOARD_VERSION
-export XBOARD_VERSION
-printf 'XBOARD_VERSION=%s\n' "$XBOARD_VERSION" > .env
-docker compose run -it --rm \
+cp .env.example .env
+
+# Fill these with exact tags from the Xboard and Xboard-Admin release manifests.
+cat >> .env <<'EOF'
+XBOARD_DEPLOY_DIR=/opt/xboard
+XBOARD_VERSION=vX.Y.Z
+XBOARD_ADMIN_VERSION=vA.B.C
+XBOARD_UPDATER_VERSION=vA.B.C
+XBOARD_PANEL_URL=https://panel.example.com
+EOF
+
+./deploy/compose/validate.sh compose.yaml
+docker compose --env-file .env -f compose.yaml config
+docker compose --env-file .env -f compose.yaml run --rm \
     -e ENABLE_SQLITE=true \
     -e ENABLE_REDIS=true \
-    -e ADMIN_ACCOUNT=admin@demo.com \
-    xboard php artisan xboard:install && \
-docker compose up -d
-```
+    -e ADMIN_ACCOUNT=admin@example.com \
+    xboard php artisan xboard:install
+docker compose --env-file .env -f compose.yaml up -d
+~~~
 
-The samples use `ghcr.io/voidintheshell/xboard` and require an explicitly selected
-published version tag. Copy it from this repository's successful publish job;
-`latest` is not selected automatically. The full three-container deployment uses
-`ghcr.io/voidintheshell/xboard-admin` and `ghcr.io/voidintheshell/dk_theme` alongside
-the panel image; see [staging](deploy/staging/README.md) and
-[production](deploy/production/README.md). Container stdout rotates at 10 MB × 3
-files per container; mounted panel logs have a separate budget.
+The default template uses four services: the Xboard backend, standalone Admin,
+a private updater, and the one-shot updater bootstrap. The backend, Admin, and
+Updater images use exact published tags; the Admin and Updater tags must match.
+The Updater has no public port and uses the Docker socket for controlled Compose
+replacement and recovery. Treat that socket as host-level authority.
 
-> After installation, visit: http://SERVER_IP:7001  
+All GitHub-published Xboard, Admin, and Updater images are built for
+linux/amd64 and linux/arm64. Local acceptance on Windows is intentionally
+limited to linux/amd64; do not locally build or run ARM64.
+
+The full Theme-backed deployment remains under [staging](deploy/staging/README.md)
+and [production](deploy/production/README.md). The default template does not
+modify or include DK_Theme.
+
+> After installation, visit the standalone Admin at http://SERVER_IP:7003 and
+> the backend at http://SERVER_IP:7001 unless a reverse proxy is configured.
 > ⚠️ Make sure to save the admin credentials shown during installation
 
 ## 📖 Documentation

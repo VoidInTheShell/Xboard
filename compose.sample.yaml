@@ -1,38 +1,152 @@
-# Default deployment: bridge network with port 7001 published to the host.
-# Suitable for: bare docker-compose, aaPanel + Docker manager, custom reverse
-# proxies (nginx, Caddy on host, Cloudflare Tunnel, etc.) that talk to
-# 127.0.0.1:7001 on the host.
-#
-# For 1Panel users: use compose.1panel.sample.yaml so the container can reach
-# the 1Panel-managed MySQL/Redis on the 1panel-network.
-#
-# For aaPanel native (openresty on host) users that prefer host networking:
-# use compose.host.sample.yaml.
-# Container output is separate from the mounted panel log budget.
+name: xboard
+
+# Default topology: Xboard keeps its existing embedded Web/Horizon/WebSocket/
+# Redis process layout, while Admin, Updater and the one-shot bootstrap run as
+# separate services. Set XBOARD_DEPLOY_DIR to the same absolute path on the
+# host and inside xboard-updater; the updater must be able to hand the exact
+# Compose file path to the host Docker daemon.
+
 x-container-logging: &container-logging
   driver: json-file
   options:
     max-size: "10m"
     max-file: "3"
 
+x-xboard-volumes: &xboard-volumes
+  - ${XBOARD_DEPLOY_DIR:?Set XBOARD_DEPLOY_DIR to the absolute deployment directory}/.env:/www/.env
+  - ${XBOARD_DEPLOY_DIR}/.docker/.data:/www/.docker/.data
+  - ${XBOARD_DEPLOY_DIR}/storage/logs:/www/storage/logs
+  - ${XBOARD_DEPLOY_DIR}/storage/app/public:/www/storage/app/public
+  - ${XBOARD_DEPLOY_DIR}/storage/theme:/www/storage/theme
+  - ${XBOARD_DEPLOY_DIR}/plugins:/www/plugins
+  - xboard-redis-data:/data
+
 services:
   xboard:
-    image: ghcr.io/voidintheshell/xboard:${XBOARD_VERSION:?Set XBOARD_VERSION to a published build or release tag}
+    image: ghcr.io/voidintheshell/xboard:${XBOARD_VERSION:?Set XBOARD_VERSION to an exact published Xboard version}
+    container_name: xboard-app
     logging: *container-logging
     restart: unless-stopped
+    init: true
     ports:
-      - "7001:7001"
-    volumes:
-      - ./.env:/www/.env
-      - ./.docker/.data/:/www/.docker/.data
-      - ./storage/logs:/www/storage/logs
-      - ./storage/theme:/www/storage/theme
-      - ./plugins:/www/plugins
-      - redis-data:/data
+      - "${XBOARD_PORT:-7001}:7001"
+    volumes: *xboard-volumes
     environment:
-      - RESOURCE_PROFILE=balanced      # minimal | balanced | performance | auto
-      - ENABLE_HORIZON=true
-      - docker=true
+      APP_ENV: production
+      RESOURCE_PROFILE: ${RESOURCE_PROFILE:-balanced}
+      ENABLE_WEB: "true"
+      ENABLE_HORIZON: "true"
+      ENABLE_REDIS: "true"
+      ENABLE_WS_SERVER: "true"
+      ENABLE_CADDY: "true"
+      docker: "true"
+    networks:
+      - xboard-internal
+      - xboard-egress
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:7001/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 75s
+
+  xboard-admin:
+    image: ghcr.io/voidintheshell/xboard-admin:${XBOARD_ADMIN_VERSION:?Set XBOARD_ADMIN_VERSION to the exact Admin release version}
+    container_name: xboard-admin
+    logging: *container-logging
+    restart: unless-stopped
+    init: true
+    depends_on:
+      xboard:
+        condition: service_healthy
+    ports:
+      - "${XBOARD_ADMIN_PORT:-7003}:80"
+    expose:
+      - "80"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    networks:
+      - xboard-internal
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  updater-bootstrap:
+    image: ghcr.io/voidintheshell/xboard:${XBOARD_VERSION:?Set XBOARD_VERSION to the same exact Xboard release above}
+    logging: *container-logging
+    restart: "no"
+    init: true
+    depends_on:
+      xboard:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/bootstrap/bootstrap.sh"]
+    volumes:
+      - ${XBOARD_DEPLOY_DIR}/.env:/www/.env:ro
+      - ${XBOARD_DEPLOY_DIR}/.docker/.data:/www/.docker/.data
+      - ${XBOARD_DEPLOY_DIR}/deploy/updater/bootstrap.sh:/bootstrap/bootstrap.sh:ro
+      - ${XBOARD_DEPLOY_DIR}/deploy/updater/panel-hook.sh:/bootstrap/panel-hook.sh:ro
+      - updater-config:/etc/xboard-updater
+      - updater-state:/var/lib/xboard-updater
+    environment:
+      XBOARD_PANEL_URL: ${XBOARD_PANEL_URL:?Set XBOARD_PANEL_URL to the HTTPS panel URL}
+      XBOARD_ADMIN_VERSION: ${XBOARD_ADMIN_VERSION}
+      XBOARD_DEPLOY_DIR: ${XBOARD_DEPLOY_DIR}
+      XBOARD_COMPOSE_FILE: ${XBOARD_COMPOSE_FILE:-${XBOARD_DEPLOY_DIR}/compose.yaml}
+      XBOARD_ENV_FILE: ${XBOARD_ENV_FILE:-${XBOARD_DEPLOY_DIR}/.env}
+      XBOARD_HEALTH_URL: ${XBOARD_HEALTH_URL:-http://xboard-app:7001/}
+      XBOARD_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-xboard}
+      XBOARD_BACKEND_CONTAINER: xboard-app
+    networks:
+      - xboard-internal
+
+  xboard-updater:
+    image: ghcr.io/voidintheshell/xboard-admin-updater:${XBOARD_UPDATER_VERSION:?Set XBOARD_UPDATER_VERSION equal to XBOARD_ADMIN_VERSION}
+    container_name: xboard-updater
+    logging: *container-logging
+    restart: unless-stopped
+    init: true
+    depends_on:
+      xboard:
+        condition: service_healthy
+      updater-bootstrap:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - updater-config:/etc/xboard-updater
+      - updater-state:/var/lib/xboard-updater
+      - updater-backups:/var/lib/xboard-updater/backups
+      # This exact path must exist on the host. The updater passes it to the
+      # host Docker daemon for Compose operations and never mounts / from host.
+      - ${XBOARD_DEPLOY_DIR}:${XBOARD_DEPLOY_DIR}
+    networks:
+      - xboard-internal
+      - xboard-egress
 
 volumes:
-  redis-data:
+  xboard-redis-data:
+  updater-config:
+  updater-state:
+  updater-backups:
+
+networks:
+  xboard-internal:
+    internal: true
+  xboard-egress:
+    driver: bridge

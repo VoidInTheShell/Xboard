@@ -8,6 +8,7 @@ use App\Http\Controllers\V2\Admin\PlanController;
 use App\Http\Controllers\V2\Admin\Server\GroupController;
 use App\Http\Controllers\V2\Admin\Server\RouteController;
 use App\Http\Controllers\V2\Admin\Server\ManageController;
+use App\Http\Controllers\V2\Admin\Server\CertificateController;
 use App\Http\Controllers\V2\Admin\Server\MachineController;
 use App\Http\Controllers\V2\Admin\Server\XrayController;
 use App\Http\Controllers\V2\Admin\Server\RuleFileController;
@@ -129,6 +130,15 @@ class AdminRoute
                 $router->post('/batchResetTraffic', [ManageController::class, 'batchResetTraffic']);
                 $router->get('/generateEchKey', [ManageController::class, 'generateEchKey']);
             });
+            $router->group([
+                'prefix' => 'server/certificate'
+            ], function ($router) {
+                $router->get('/fetch', [CertificateController::class, 'fetch']);
+                $router->post('/validate', [CertificateController::class, 'validateConfig']);
+                $router->post('/save', [CertificateController::class, 'save']);
+                $router->post('/renew', [CertificateController::class, 'renew']);
+                $router->post('/drop', [CertificateController::class, 'drop']);
+            });
 
             $router->group([
                 'prefix' => 'server/fallback'
@@ -174,7 +184,7 @@ class AdminRoute
                 $router->post('/drop', [MachineController::class, 'drop']);
                 $router->post('/resetToken', [MachineController::class, 'resetToken']);
                 $router->get('/getToken', [MachineController::class, 'getToken']);
-                $router->get('/installCommand', [MachineController::class, 'installCommand']);
+                $router->post('/installCommand', [MachineController::class, 'installCommand']);
                 $router->get('/nodes', [MachineController::class, 'nodes']);
                 $router->get('/history', [MachineController::class, 'history']);
             });

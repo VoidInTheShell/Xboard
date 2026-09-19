@@ -4,6 +4,12 @@ Admin 的“版本更新”和 MCP 使用相同的持久化任务接口。用户
 
 更新器是 `xbctl updater` 提供的独立 Linux root 服务，不运行在被替换的节点或面板进程内。支持 amd64/arm64，节点支持 systemd、Docker、Compose，面板组件支持 Docker/Compose。
 
+## 默认面板 Compose
+
+根目录 `compose.sample.yaml` 已将面板 Updater 改为独立容器。首次启动由 `updater-bootstrap` 在后端健康后执行 `update:executor panel`，把一次性输出的凭据写入私有 volume，并生成固定的后端维护 hook；不要再把 panel token 手工复制到仓库或普通日志。`xboard-updater` 只管理 Compose 中登记的后端服务，不发布公网端口，并使用同一宿主机绝对部署路径挂载以执行恢复。
+
+默认 Compose 的首次安装、版本变量、持久化边界和安全注意事项见 [Xboard Docker Compose 安装文档](../../docs/en/installation/docker-compose.md)。本文件后续章节仍适用于节点宿主机的 systemd/Docker/Compose 接入；节点的 updater 凭据与面板凭据相互独立。
+
 ## 首次接入
 
 后端容器必须能解析并通过 HTTPS 访问 `api.github.com`、`github.com` 及其发布附件下载域名，才能检测与校验发布版本。仅连接 `internal: true` 的 Docker 网络会使 WebUI 版本检测失败。仓库的 staging/production Compose 为后端配置独立的 `xboard-egress` bridge 网络，保留原内部网络；该出站网络不发布宿主端口。旧部署接入更新器时也要补齐并持久化这一网络配置，不能只验证宿主机能访问 GitHub。更新器所在宿主机还需能访问 GHCR 和 GitHub 发布附件。

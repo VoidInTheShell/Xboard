@@ -7,8 +7,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\ServerSave;
 use App\Models\Outbound;
 use App\Models\Server;
+use App\Models\ServerCertificate;
 use App\Models\ServerGroup;
 use App\Services\ServerService;
+use App\Services\Certificates\CertificateService;
 use App\Services\FallbackSiteService;
 use App\Services\XrayConfigService;
 use Illuminate\Http\Request;
@@ -22,6 +24,18 @@ class ManageController extends Controller
         $servers = ServerService::getAllServers()->map(function ($item) {
             $item['groups'] = ServerGroup::whereIn('id', $item['group_ids'] ?? [])->get(['name', 'id']);
             $item['parent'] = $item->parent;
+            if ($item->certificate_id && $item->certificate) {
+                $item['certificate_ref_mode'] = $item->certificate_ref_mode ?: 'server_certificate';
+                $item['cert_config'] = app(CertificateService::class)->toAdminLegacyConfig($item->certificate);
+            } elseif (is_array($item->cert_config)) {
+                $item['cert_config'] = app(CertificateService::class)->redactLegacyConfig($item->cert_config);
+                $legacyMode = strtolower((string) ($item->cert_config['cert_mode'] ?? $item->cert_config['mode'] ?? ''));
+                if ($legacyMode === 'file') {
+                    $item['certificate_ref_mode'] = 'path';
+                    $item['certificate_path'] = $item->cert_config['cert_file'] ?? null;
+                    $item['private_key_path'] = $item->cert_config['key_file'] ?? null;
+                }
+            }
             return $item;
         });
         return $this->success($servers);
@@ -60,11 +74,16 @@ class ManageController extends Controller
             if (!$server) {
                 return $this->fail([400202, '服务器不存在']);
             }
-            $this->validateServerCandidate($server, $params);
             try {
-                $server->update($params);
+                DB::transaction(function () use ($server, &$params) {
+                    $params = app(CertificateService::class)->prepareNodeParams($params, $server);
+                    $this->validateServerCandidate($server, $params);
+                    $server->update($params);
+                    app(CertificateService::class)->syncBinding($server->fresh());
+                });
                 return $this->success(true);
             } catch (\Exception $e) {
+                if ($e instanceof \App\Exceptions\ApiException) throw $e;
                 Log::error($e);
                 return $this->fail([500, '保存失败']);
             }
@@ -81,11 +100,16 @@ class ManageController extends Controller
             $params['xray_config'] = XrayConfigService::defaultNodeConfig();
             $params['default_outbound_tag'] = 'direct';
         }
-        $this->validateServerCandidate(null, $params);
         try {
-            Server::create($params);
+            DB::transaction(function () use (&$params) {
+                $params = app(CertificateService::class)->prepareNodeParams($params);
+                $this->validateServerCandidate(null, $params);
+                $server = Server::create($params);
+                app(CertificateService::class)->syncBinding($server->fresh());
+            });
             return $this->success(true);
         } catch (\Exception $e) {
+            if ($e instanceof \App\Exceptions\ApiException) throw $e;
             Log::error($e);
             return $this->fail([500, '创建失败']);
         }
@@ -104,6 +128,7 @@ class ManageController extends Controller
             // relation rather than a relation copied from the old row.
             $candidate->unsetRelation('machine');
         }
+        $this->validateCertificateMachine($candidate);
         XrayConfigService::preflightNode(
             $candidate,
             $candidate->xray_config instanceof \stdClass ? $candidate->xray_config : null,
@@ -113,12 +138,30 @@ class ManageController extends Controller
         app(FallbackSiteService::class)->validate($candidate);
     }
 
+    /**
+     * A certificate resource is machine-owned. Every write path, including
+     * the small enabled/show/machine_id endpoint, must reject a node that
+     * would keep a resource from another machine.
+     */
+    private function validateCertificateMachine(Server $candidate): void
+    {
+        if (!$candidate->certificate_id) {
+            return;
+        }
+        if (!$candidate->machine_id || !ServerCertificate::query()
+            ->whereKey($candidate->certificate_id)
+            ->where('machine_id', $candidate->machine_id)
+            ->exists()) {
+            throw new ApiException('节点绑定的证书资源不属于目标服务器，请先选择该服务器的证书。', 422);
+        }
+    }
+
     public function update(Request $request)
     {
         $params = $request->validate([
             'id' => 'required|integer',
             'show' => 'nullable|integer',
-            'machine_id' => 'nullable|integer',
+            'machine_id' => 'nullable|integer|exists:v2_server_machine,id',
             'enabled' => 'nullable|boolean',
         ]);
 
@@ -130,21 +173,38 @@ class ManageController extends Controller
         $willRun = array_key_exists('enabled', $params)
             ? (bool) $params['enabled']
             : (bool) $server->enabled;
-        if ($willRun && (array_key_exists('enabled', $params) || array_key_exists('machine_id', $params))) {
-            $this->validateServerCandidate($server, $params);
-        }
+        try {
+            DB::transaction(function () use ($server, $params, $willRun): void {
+                // This check intentionally runs even for disabled nodes: a
+                // disabled row is still the source of the next machine
+                // configuration and must never retain an invalid resource.
+                if ($willRun || array_key_exists('machine_id', $params)) {
+                    $this->validateServerCandidate($server, $params);
+                } else {
+                    $candidate = clone $server;
+                    $candidate->fill($params);
+                    $this->validateCertificateMachine($candidate);
+                }
 
-        if (array_key_exists('show', $params)) {
-            $server->show = (int) $params['show'];
-        }
-        if (array_key_exists('machine_id', $params)) {
-            $server->machine_id = $params['machine_id'] ?: null;
-        }
-        if (array_key_exists('enabled', $params)) {
-            $server->enabled = (bool) $params['enabled'];
-        }
+                if (array_key_exists('show', $params)) {
+                    $server->show = (int) $params['show'];
+                }
+                if (array_key_exists('machine_id', $params)) {
+                    $server->machine_id = $params['machine_id'] ?: null;
+                }
+                if (array_key_exists('enabled', $params)) {
+                    $server->enabled = (bool) $params['enabled'];
+                }
 
-        if (!$server->save()) {
+                if (!$server->save()) {
+                    throw new ApiException('保存失败', 500);
+                }
+                app(CertificateService::class)->syncBinding($server->fresh());
+            });
+        } catch (ApiException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            Log::error($e);
             return $this->fail([500, '保存失败']);
         }
 
@@ -324,7 +384,11 @@ class ManageController extends Controller
             DB::transaction(function () use ($servers, $update) {
                 /** @var Server $server */
                 foreach ($servers as $server) {
+                    $candidate = clone $server;
+                    $candidate->fill($update);
+                    $this->validateCertificateMachine($candidate);
                     $server->update($update);
+                    app(CertificateService::class)->syncBinding($server->fresh());
                 }
             });
             return $this->success(true);
@@ -346,12 +410,23 @@ class ManageController extends Controller
             return $this->fail([400202, '服务器不存在']);
         }
 
-        $copiedServer = $server->replicate();
-        $copiedServer->show = 0;
-        $copiedServer->code = null;
-        $copiedServer->u = 0;
-        $copiedServer->d = 0;
-        $copiedServer->save();
+        try {
+            DB::transaction(function () use ($server): void {
+                $copiedServer = $server->replicate();
+                $copiedServer->show = 0;
+                $copiedServer->code = null;
+                $copiedServer->u = 0;
+                $copiedServer->d = 0;
+                $this->validateCertificateMachine($copiedServer);
+                $copiedServer->save();
+                app(CertificateService::class)->syncBinding($copiedServer->fresh());
+            });
+        } catch (ApiException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            Log::error($e);
+            return $this->fail([500, '复制失败']);
+        }
 
         return $this->success(true);
     }

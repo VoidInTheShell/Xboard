@@ -119,6 +119,15 @@ jobs:
           bash -n deploy/production/deploy.sh
           bash -n deploy/production/bunkerweb/apply-mcp-compat.sh
           for script in deploy/production/host/*.sh; do bash -n "${script}"; done
+          bash -n deploy/updater/bootstrap.sh
+          bash -n deploy/updater/panel-hook.sh
+          bash -n deploy/compose/validate.sh
+          export XBOARD_VERSION=v0.0.1-dev.1.1
+          export XBOARD_ADMIN_VERSION=v0.0.1-dev.1.1
+          export XBOARD_UPDATER_VERSION=v0.0.1-dev.1.1
+          export XBOARD_DEPLOY_DIR="${GITHUB_WORKSPACE}"
+          export XBOARD_PANEL_URL=https://panel.validation.invalid
+          ./deploy/compose/validate.sh compose.sample.yaml
           docker compose -f deploy/staging/compose.yaml config --no-interpolate > /dev/null
           docker compose -f deploy/production/compose.yaml config --no-interpolate > /dev/null
           docker run --rm --entrypoint php \
@@ -308,6 +317,109 @@ jobs:
           echo "Published staging image: ${image}"
           printf 'Staging image: `%s`\n' "${image}" >> "$GITHUB_STEP_SUMMARY"
 
+  compose-smoke:
+    name: Smoke-test versioned Compose stack (amd64)
+    if: github.event_name != 'pull_request' && needs.prepare-release.outputs.publish == 'true'
+    needs: [build-and-push, prepare-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.prepare-release.outputs.checkout_ref }}
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Load the frozen release manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: ${{ needs.prepare-release.outputs.plan_artifact }}
+          path: ${{ runner.temp }}
+      - name: Start and verify the default Compose stack
+        shell: bash
+        env:
+          RELEASE_MANIFEST: ${{ runner.temp }}/release-manifest.json
+        run: |
+          set -Eeuo pipefail
+          stack="${RUNNER_TEMP}/xboard-compose"
+          mkdir -p "${stack}/.docker/.data" "${stack}/storage/logs" "${stack}/storage/app/public" "${stack}/storage/theme" "${stack}/plugins" "${stack}/deploy/updater"
+          cp compose.sample.yaml "${stack}/compose.yaml"
+          cp .env.example "${stack}/.env"
+          cp deploy/updater/bootstrap.sh deploy/updater/panel-hook.sh "${stack}/deploy/updater/"
+          cat > "${stack}/smoke.override.yaml" <<EOF
+          services:
+            xboard-updater:
+              network_mode: host
+              networks: !reset []
+          EOF
+          xboard_version=$(jq -er '.version' "${RELEASE_MANIFEST}")
+          admin_version=$(jq -er '.components["xboard-admin"].version' "${RELEASE_MANIFEST}")
+          {
+            printf 'XBOARD_DEPLOY_DIR=%s\n' "${stack}"
+            printf 'XBOARD_VERSION=%s\n' "${xboard_version}"
+            printf 'XBOARD_ADMIN_VERSION=%s\n' "${admin_version}"
+           printf 'XBOARD_UPDATER_VERSION=%s\n' "${admin_version}"
+            printf 'XBOARD_PANEL_URL=%s\n' 'http://127.0.0.1:7001'
+            printf 'XBOARD_COMPOSE_FILE=%s\n' "${stack}/compose.yaml"
+            printf 'XBOARD_HEALTH_URL=%s\n' 'http://127.0.0.1:7001/'
+          } >> "${stack}/.env"
+          export XBOARD_DEPLOY_DIR="${stack}"
+          export XBOARD_VERSION="${xboard_version}"
+          export XBOARD_ADMIN_VERSION="${admin_version}"
+          export XBOARD_UPDATER_VERSION="${admin_version}"
+          export XBOARD_PANEL_URL=http://127.0.0.1:7001
+          ./deploy/compose/validate.sh "${stack}/compose.yaml"
+          compose=(docker compose --env-file "${stack}/.env" --project-name xboard -f "${stack}/compose.yaml" -f "${stack}/smoke.override.yaml")
+          "${compose[@]}" run --rm -e ENABLE_SQLITE=true -e ENABLE_REDIS=true -e ADMIN_ACCOUNT=admin@validation.invalid xboard php artisan xboard:install
+          "${compose[@]}" up -d
+          for attempt in $(seq 1 45); do
+          if curl --fail --silent --show-error http://127.0.0.1:7003/healthz > /dev/null; then
+          break
+          fi
+          if [ "${attempt}" -eq 45 ]; then
+          "${compose[@]}" ps
+          "${compose[@]}" logs --tail 200 xboard xboard-admin updater-bootstrap xboard-updater
+          exit 1
+          fi
+          sleep 2
+          done
+          bootstrap_container=
+          for attempt in $(seq 1 60); do
+            bootstrap_container=$("${compose[@]}" ps -aq updater-bootstrap)
+            if [ -n "${bootstrap_container}" ] && [ "$(docker inspect -f "{{.State.Status}}" "${bootstrap_container}")" = "exited" ]; then
+              break
+            fi
+            sleep 2
+          done
+          test -n "${bootstrap_container}"
+          test "$(docker inspect -f "{{.State.Status}} {{.State.ExitCode}}" "${bootstrap_container}")" = "exited 0"
+          heartbeat=missing
+          for attempt in $(seq 1 30); do
+          heartbeat=$(docker exec xboard-app php -r 'require "/www/vendor/autoload.php"; $app=require "/www/bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); echo \App\Models\UpdateExecutor::where("scope", "panel")->whereNotNull("last_seen_at")->exists() ? "heartbeat" : "missing";' 2>/dev/null || true)
+            if [ "${heartbeat}" = "heartbeat" ]; then
+              break
+            fi
+            sleep 2
+          done
+          if [ "${heartbeat}" != "heartbeat" ]; then
+            "${compose[@]}" logs --tail 200 xboard updater-bootstrap xboard-updater
+            exit 1
+          fi
+          if "${compose[@]}" logs --no-color updater-bootstrap | grep -Eq "xbu_[A-Za-z0-9]+"; then
+            echo "bootstrap logs contain an updater credential" >&2
+            exit 1
+          fi
+          test "$(docker inspect -f "{{.Config.Image}}" xboard-app)" = "ghcr.io/voidintheshell/xboard:${xboard_version}"
+          test "$(docker inspect -f "{{.Config.Image}}" xboard-admin)" = "ghcr.io/voidintheshell/xboard-admin:${admin_version}"
+          test "$(docker inspect -f "{{.Config.Image}}" xboard-updater)" = "ghcr.io/voidintheshell/xboard-admin-updater:${admin_version}"
+          "${compose[@]}" ps
+          "${compose[@]}" down --remove-orphans
   deploy-staging:
     name: Rebuild GJHK staging
     # Paused while upgrades are validated through the panel-owned updater.
@@ -690,7 +802,7 @@ jobs:
 
   release:
     name: Publish complete version
-    needs: [prepare-release, build-and-push]
+    needs: [prepare-release, build-and-push, compose-smoke]
     if: needs.prepare-release.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:

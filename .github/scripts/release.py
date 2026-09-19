@@ -78,14 +78,33 @@ def image_reference(component, tag):
 
 
 def validate_manifest(manifest, component, tag):
-    require(manifest.get("schema_version") == 1, "Unsupported release manifest schema")
+    legacy_theme = component == "dk_theme" and manifest.get("schema_version") == 1
+    require(manifest.get("schema_version") == 2 or legacy_theme, "Unsupported release manifest schema")
     require(manifest.get("component") == component and manifest.get("version") == tag,
             "Component manifest identity mismatch")
     require(manifest.get("repository") == REPOS[component][0], "Unexpected release repository")
-    require(manifest.get("image") == image_reference(component, tag), "Unexpected image reference")
     require(manifest.get("platforms") == ["linux/amd64", "linux/arm64"], "Incomplete image platforms")
     require(manifest.get("channel") == ("dev" if "-dev." in tag else "stable"), "Channel mismatch")
-    require(manifest.get("compatibility", {}).get("panel_contract") == 1, "Incompatible panel contract")
+    if legacy_theme:
+        require(manifest.get("image") == image_reference(component, tag), "Unexpected image reference")
+        require(manifest.get("compatibility", {}).get("panel_contract") == 1
+                and manifest.get("compatibility", {}).get("update_protocol") == 1,
+                "Incompatible legacy theme contract")
+        return manifest
+    require(re.fullmatch(r"[0-9a-fA-F]{40}", manifest.get("source_commit", "")) is not None,
+            "Invalid source commit")
+    compatibility = manifest.get("compatibility", {})
+    require(compatibility.get("panel_contract") == 1
+            and compatibility.get("update_protocol") == 2
+            and compatibility.get("updater_state_schema") == 1,
+            "Incompatible updater contract")
+    if component == "xboard-admin":
+        artifacts = manifest.get("artifacts", {})
+        require(artifacts.get("admin_image") == image_reference(component, tag), "Unexpected Admin image reference")
+        require(artifacts.get("updater_image") == image_reference("xboard-admin-updater", tag),
+                "Unexpected updater image reference")
+    else:
+        require(manifest.get("image") == image_reference(component, tag), "Unexpected image reference")
     return manifest
 
 
@@ -113,7 +132,12 @@ def dependency(component, selector, channel):
         if len(assets) != 1:
             continue
         manifest = validate_manifest(public_json(assets[0]["browser_download_url"], repo, tag), component, tag)
-        return {"repository": repo, "version": tag, "image": manifest["image"]}
+        result = {"repository": repo, "version": tag,
+                  "image": manifest.get("image") or manifest["artifacts"]["admin_image"]}
+        if component == "xboard-admin":
+            result["artifacts"] = manifest["artifacts"]
+            result["compatibility"] = manifest["compatibility"]
+        return result
     raise ValueError(f"No complete compatible release for {repo}; publish the frontend first or select an exact version")
 
 
@@ -142,11 +166,11 @@ def plan(config, env):
         tag = f'build-{env["GITHUB_RUN_ID"]}-{env["GITHUB_RUN_ATTEMPT"]}'
         require(re.fullmatch(r"build-[1-9]\d*-[1-9]\d*", tag) is not None, "Invalid build identity")
         channel, publish = "legacy", False
-    return {"schema_version": 1, "component": component, "repository": repo,
+    return {"schema_version": 2, "component": component, "repository": repo,
             "version": tag, "channel": channel, "source_commit": sha, "publish": publish,
             "image": f"ghcr.io/voidintheshell/{component}:{tag}",
             "platforms": ["linux/amd64", "linux/arm64"],
-            "compatibility": {"panel_contract": 1, "update_protocol": 1},
+            "compatibility": {"panel_contract": 1, "update_protocol": 2, "updater_state_schema": 1},
             "update_capability": "external-executor-required"}
 
 

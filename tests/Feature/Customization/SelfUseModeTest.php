@@ -3,10 +3,14 @@
 namespace Tests\Feature\Customization;
 
 use App\Http\Controllers\V1\User\CommController as UserCommController;
+use App\Http\Controllers\V1\Guest\PlanController as GuestPlanController;
+use App\Http\Controllers\V1\User\OrderController as UserOrderController;
+use App\Http\Controllers\V1\User\PlanController as UserPlanController;
 use App\Http\Controllers\V1\User\UserController;
 use App\Http\Controllers\V2\Admin\ConfigController;
 use App\Http\Controllers\V2\Admin\Server\MachineController;
 use App\Models\ServerMachine;
+use App\Models\UpdateExecutor;
 use App\Models\User;
 use App\Support\Setting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -71,32 +75,77 @@ class SelfUseModeTest extends TestCase
             ->assertJsonPath('data.is_staff', false);
     }
 
+    public function test_self_use_mode_blocks_regular_purchase_apis_but_preserves_staff_access(): void
+    {
+        admin_setting(['self_use_mode' => true]);
+
+        Sanctum::actingAs($this->makeUser());
+        $this->getJson($this->routePath(UserPlanController::class . '@fetch'))
+            ->assertForbidden();
+        $this->getJson($this->routePath(GuestPlanController::class . '@fetch'))
+            ->assertForbidden();
+        $this->getJson($this->routePath(UserOrderController::class . '@fetch'))
+            ->assertForbidden();
+        $this->postJson($this->routePath(UserOrderController::class . '@save'), [])
+            ->assertForbidden();
+
+        foreach ([['is_admin' => true], ['is_staff' => true]] as $role) {
+            Sanctum::actingAs($this->makeUser($role));
+            $this->getJson($this->routePath(UserPlanController::class . '@fetch'))
+                ->assertOk();
+            $this->getJson($this->routePath(GuestPlanController::class . '@fetch'))
+                ->assertOk();
+            $this->getJson($this->routePath(UserOrderController::class . '@fetch'))
+                ->assertOk();
+        }
+    }
+
     public function test_machine_install_command_uses_the_forked_node_installer(): void
     {
         Sanctum::actingAs($this->makeUser(['is_admin' => true]));
+        UpdateExecutor::create([
+            'id' => (string) Str::uuid(),
+            'name' => 'panel-updater',
+            'kind' => 'panel',
+            'scope' => 'panel',
+            'secret_hash' => hash('sha256', 'panel-updater-secret'),
+            'enabled' => true,
+            'blocked' => false,
+            'protocol' => 2,
+            'state_schema' => 1,
+            'updater_version' => 'v0.2.0',
+            'installation_method' => 'compose',
+            'last_seen_at' => now(),
+        ]);
         $machine = ServerMachine::create([
             'name' => 'test-machine',
             'token' => 'test-machine-token',
             'is_active' => true,
         ]);
 
-        $response = $this->getJson(
-            $this->routePath(MachineController::class . '@installCommand') . '?id=' . $machine->id
-        )->assertOk();
+        $response = $this->postJson($this->routePath(MachineController::class . '@installCommand'), [
+            'id' => $machine->id,
+            'version' => 'v1.14.0-dev.1234.1',
+            'mode' => 'compose',
+        ])->assertOk();
 
         $command = $response->json('data.command');
         $this->assertStringContainsString(
-            'https://github.com/VoidInTheShell/Xboard-Node/releases/latest/download/install.sh',
+            'https://github.com/VoidInTheShell/Xboard-Node/releases/download/v1.14.0-dev.1234.1/install.sh',
             $command
         );
         $this->assertStringNotContainsString('cedar2025/xboard-node', $command);
+        $this->assertStringContainsString('--enrollment-token', $command);
+        $this->assertStringNotContainsString('test-machine-token', $command);
+        $this->assertStringContainsString('--updater-version \'v0.2.0\'', $command);
 
-        $version = 'v1.14.0-dev.1234.1';
-        $pinned = $this->getJson(
-            $this->routePath(MachineController::class . '@installCommand') . '?id=' . $machine->id . '&version=' . $version
-        )->assertOk()->json('data.command');
+        $pinned = $this->postJson($this->routePath(MachineController::class . '@installCommand'), [
+            'id' => $machine->id,
+            'version' => 'v1.14.0-dev.1234.1',
+            'mode' => 'systemd',
+        ])->assertOk()->json('data.command');
         $this->assertStringContainsString(
-            'https://github.com/VoidInTheShell/Xboard-Node/releases/download/' . $version . '/install.sh',
+            'https://github.com/VoidInTheShell/Xboard-Node/releases/download/v1.14.0-dev.1234.1/install.sh',
             $pinned
         );
         $this->assertStringNotContainsString('/releases/latest/', $pinned);

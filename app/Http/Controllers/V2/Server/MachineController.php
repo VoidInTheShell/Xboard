@@ -5,6 +5,8 @@ namespace App\Http\Controllers\V2\Server;
 use App\Http\Controllers\Controller;
 use App\Models\ServerMachine;
 use App\Models\ServerMachineLoadHistory;
+use App\Models\ServerCertificate;
+use App\Services\Certificates\CertificateService;
 use App\Services\ServerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,8 +30,13 @@ class MachineController extends Controller
                 'name' => $node->name,
             ])->values();
 
+        $certificates = app(CertificateService::class)->listForMachine((int) $machine->id)
+            ->map(fn ($certificate) => app(CertificateService::class)->toMachineProjection($certificate))
+            ->values();
+
         return response()->json([
             'nodes' => $nodes,
+            'certificates' => $certificates,
             'base_config' => [
                 'push_interval' => (int) admin_setting('server_push_interval', 60),
                 'pull_interval' => (int) admin_setting('server_pull_interval', 60),
@@ -52,6 +59,16 @@ class MachineController extends Controller
             'disk.used' => 'nullable|integer|min:0',
             'net.in_speed' => 'nullable|numeric|min:0',
             'net.out_speed' => 'nullable|numeric|min:0',
+            'certificates' => 'nullable|array',
+            'certificates.*.id' => 'required_with:certificates|string|max:128',
+            'certificates.*.revision' => 'required_with:certificates|integer|min:1',
+            'certificates.*.applied_revision' => 'nullable|integer|min:0',
+            'certificates.*.ready' => 'nullable|boolean',
+            'certificates.*.state' => 'nullable|string|max:32',
+            'certificates.*.error' => 'nullable|string|max:512',
+            'certificates.*.not_before_at' => 'nullable|date',
+            'certificates.*.expires_at' => 'nullable|date',
+            'certificates.*.fingerprint' => 'nullable|string|max:128',
         ]);
 
         $machine = $this->authenticateMachine($request);
@@ -82,6 +99,49 @@ class MachineController extends Controller
                 'in_speed' => (float) $netInSpeed,
                 'out_speed' => (float) $netOutSpeed,
             ];
+        }
+        if (is_array($request->input('certificates'))) {
+            $loadStatus['certificates'] = collect($request->input('certificates'))
+                ->map(fn($certificate) => [
+                    'id' => (string) ($certificate['id'] ?? ''),
+                    'revision' => (int) ($certificate['revision'] ?? 0),
+                    'applied_revision' => (int) ($certificate['applied_revision'] ?? 0),
+                    'ready' => (bool) ($certificate['ready'] ?? false),
+                    'state' => (string) ($certificate['state'] ?? 'unknown'),
+                    'error' => $certificate['error'] ?? null,
+                    'not_before_at' => $certificate['not_before_at'] ?? null,
+                    'expires_at' => $certificate['expires_at'] ?? null,
+                    'fingerprint' => $certificate['fingerprint'] ?? null,
+                ])->values()->all();
+
+            foreach ($request->input('certificates') as $reported) {
+                $certificate = ServerCertificate::query()
+                    ->whereKey((string) ($reported['id'] ?? ''))
+                    ->where('machine_id', $machine->id)
+                    ->first();
+                if (!$certificate || (int) ($reported['revision'] ?? 0) !== (int) $certificate->revision) {
+                    // A delayed heartbeat from an older desired revision must
+                    // never overwrite the current status or expiry metadata.
+                    continue;
+                }
+                $state = (string) ($reported['state'] ?? 'unknown');
+                $status = match ($state) {
+                    'ready' => 'valid',
+                    'expiring' => 'expiring',
+                    'expired' => 'expired',
+                    'missing', 'error' => 'error',
+                    default => $certificate->status ?: 'pending',
+                };
+                $certificate->forceFill([
+                    'status' => $status,
+                    'not_before_at' => $reported['not_before_at'] ?? null,
+                    'expires_at' => $reported['expires_at'] ?? null,
+                    'fingerprint' => $reported['fingerprint'] ?? null,
+                    'last_error' => $status === 'error'
+                        ? (string) ($reported['error'] ?? '机器未能加载当前证书材料。')
+                        : null,
+                ])->save();
+            }
         }
 
         $machine->forceFill([

@@ -22,6 +22,7 @@ class OrderController extends Controller
 {
     public function fetch(Request $request)
     {
+        $this->assertPurchaseAccess($request->user());
         $request->validate([
             'status' => 'nullable|integer|in:0,1,2,3',
         ]);
@@ -38,6 +39,7 @@ class OrderController extends Controller
 
     public function detail(Request $request)
     {
+        $this->assertPurchaseAccess($request->user());
         $request->validate([
             'trade_no' => 'required|string',
         ]);
@@ -60,6 +62,7 @@ class OrderController extends Controller
 
     public function save(OrderSave $request)
     {
+        $this->assertPurchaseAccess($request->user());
         $request->validate([
             'plan_id' => 'required|exists:App\Models\Plan,id',
             'period' => 'required|string'
@@ -117,6 +120,7 @@ class OrderController extends Controller
 
     public function checkout(Request $request)
     {
+        $this->assertPurchaseAccess($request->user());
         $tradeNo = $request->input('trade_no');
         $method = $request->input('method');
         $order = Order::where('trade_no', $tradeNo)
@@ -165,6 +169,7 @@ class OrderController extends Controller
 
     public function check(Request $request)
     {
+        $this->assertPurchaseAccess($request->user());
         $tradeNo = $request->input('trade_no');
         $order = Order::where('trade_no', $tradeNo)
             ->where('user_id', $request->user()->id)
@@ -175,8 +180,9 @@ class OrderController extends Controller
         return $this->success($order->status);
     }
 
-    public function getPaymentMethod()
+    public function getPaymentMethod(Request $request)
     {
+        $this->assertPurchaseAccess($request->user());
         $methods = Payment::select([
             'id',
             'name',
@@ -194,6 +200,7 @@ class OrderController extends Controller
 
     public function cancel(Request $request)
     {
+        $this->assertPurchaseAccess($request->user());
         if (empty($request->input('trade_no'))) {
             return $this->fail([422, __('Invalid parameter')]);
         }
@@ -211,5 +218,12 @@ class OrderController extends Controller
             return $this->fail([400, __('Cancel failed')]);
         }
         return $this->success(true);
+    }
+
+    private function assertPurchaseAccess(User $user): void
+    {
+        if ((bool) admin_setting('self_use_mode', 0) && !$user->is_admin && !$user->is_staff) {
+            throw new ApiException('自用模式下普通用户不可访问套餐与订单功能。', 403);
+        }
     }
 }

@@ -6,6 +6,7 @@ use App\Http\Controllers\V1\Server\TrojanTidalabController;
 use App\Http\Controllers\V1\Server\UniProxyController;
 use App\Http\Controllers\V2\Server\ServerController;
 use App\Http\Controllers\V2\Server\MachineController;
+use App\Http\Controllers\V2\Server\EnrollmentController;
 use Illuminate\Contracts\Routing\Registrar;
 
 class ServerRoute
@@ -25,6 +26,13 @@ class ServerRoute
             $route->post('alive', [UniProxyController::class, 'alive']);
             $route->get('alivelist', [UniProxyController::class, 'alivelist']);
             $route->post('status', [UniProxyController::class, 'status']);
+        });
+
+        $router->group([
+            'prefix' => 'server/machine',
+            'middleware' => 'throttle:10,1',
+        ], function ($route) {
+            $route->post('enroll', [EnrollmentController::class, 'exchange']);
         });
 
         $router->group([

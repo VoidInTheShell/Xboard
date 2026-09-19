@@ -7,6 +7,9 @@ use Illuminate\Support\Facades\Http;
 
 class ReleaseCatalog
 {
+    public const UPDATE_PROTOCOL = 2;
+    public const STATE_SCHEMA = 1;
+
     public const REPOSITORIES = [
         'xboard' => 'VoidInTheShell/Xboard', 'xboard-admin' => 'VoidInTheShell/xboard-admin',
         'dk_theme' => 'VoidInTheShell/DK_Theme', 'xboard-node' => 'VoidInTheShell/Xboard-Node',
@@ -79,13 +82,41 @@ class ReleaseCatalog
         if (!$response->successful()) throw new ApiException('读取版本清单失败，请重试。', 502);
         $manifest = $response->json();
         $require(strlen($response->body()) <= 262144 && is_array($manifest));
-        $require(($manifest['schema_version'] ?? null) === 1 && ($manifest['component'] ?? '') === $component
+        $schema = (int) ($manifest['schema_version'] ?? 0);
+        // DK_Theme is intentionally outside this task's repository boundary.
+        // Keep its old catalogue readable while all executable update targets
+        // require the schema 2 protocol and state contract.
+        $legacyTheme = $component === 'dk_theme' && $schema === 1;
+        $require(($schema === 2 || $legacyTheme) && ($manifest['component'] ?? '') === $component
             && ($manifest['repository'] ?? '') === $repo && ($manifest['version'] ?? '') === $version
-            && ($manifest['channel'] ?? '') === $channel
-            && ($manifest['image'] ?? '') === "ghcr.io/voidintheshell/{$component}:{$version}"
-            && ($manifest['compatibility']['update_protocol'] ?? null) === 1
-            && ($manifest['compatibility']['panel_contract'] ?? null) === 1);
-        $require(in_array('linux/amd64', $manifest['platforms'] ?? [], true) && in_array('linux/arm64', $manifest['platforms'] ?? [], true));
+            && ($manifest['channel'] ?? '') === $channel);
+        $require(in_array('linux/amd64', $manifest['platforms'] ?? [], true)
+            && in_array('linux/arm64', $manifest['platforms'] ?? [], true));
+        if ($legacyTheme) {
+            $require(($manifest['image'] ?? '') === "ghcr.io/voidintheshell/{$component}:{$version}"
+                && ($manifest['compatibility']['update_protocol'] ?? null) === 1
+                && ($manifest['compatibility']['panel_contract'] ?? null) === 1);
+        } else {
+            $require(preg_match('/\\A[0-9a-fA-F]{40}\\z/', (string) ($manifest['source_commit'] ?? '')) === 1,
+                'Invalid source commit');
+            $require(($manifest['compatibility']['update_protocol'] ?? null) === self::UPDATE_PROTOCOL
+                && ($manifest['compatibility']['updater_state_schema'] ?? null) === self::STATE_SCHEMA
+                && ($manifest['compatibility']['panel_contract'] ?? null) === 1);
+        }
+
+        if ($component === 'xboard-admin') {
+            $artifacts = $manifest['artifacts'] ?? [];
+            $prefix = "https://github.com/{$repo}/releases/download/{$version}/xboard-updater-";
+            $require(($artifacts['admin_image'] ?? '') === "ghcr.io/voidintheshell/xboard-admin:{$version}");
+            $require(($artifacts['updater_image'] ?? '') === "ghcr.io/voidintheshell/xboard-admin-updater:{$version}");
+            foreach (['amd64', 'arm64'] as $arch) {
+                $assetName = "xboard-updater-linux-{$arch}";
+                $require(($assets[$assetName]['size'] ?? 0) > 0);
+                $require(($artifacts['updater_binaries']["linux/{$arch}"] ?? '') === $prefix . "linux-{$arch}");
+            }
+        } elseif (!$legacyTheme) {
+            $require(($manifest['image'] ?? '') === "ghcr.io/voidintheshell/{$component}:{$version}");
+        }
         if ($component === 'xboard-node') {
             foreach (['amd64', 'arm64'] as $arch) foreach (['xboard-node', 'xbctl'] as $name) {
                 $require(($assets["{$name}-linux-{$arch}"]['size'] ?? 0) > 0);
@@ -93,8 +124,22 @@ class ReleaseCatalog
             }
             $require(($assets['install.sh']['size'] ?? 0) > 0);
         }
+        if ($component === 'xboard') {
+            $admin = $manifest['components']['xboard-admin'] ?? [];
+            $adminVersion = (string) ($admin['version'] ?? '');
+            $adminArtifacts = $admin['artifacts'] ?? [];
+            $require(self::channel($adminVersion) !== null
+                && ($admin['repository'] ?? '') === self::REPOSITORIES['xboard-admin']
+                && ($admin['image'] ?? '') === "ghcr.io/voidintheshell/xboard-admin:{$adminVersion}"
+                && ($adminArtifacts['admin_image'] ?? '') === $admin['image']
+                && ($adminArtifacts['updater_image'] ?? '') === "ghcr.io/voidintheshell/xboard-admin-updater:{$adminVersion}");
+            foreach (['amd64', 'arm64'] as $arch) {
+                $require(($adminArtifacts['updater_binaries']["linux/{$arch}"] ?? '')
+                    === "https://github.com/VoidInTheShell/xboard-admin/releases/download/{$adminVersion}/xboard-updater-linux-{$arch}");
+            }
+        }
         return ['component' => $component, 'version' => $version, 'channel' => $channel,
             'published_at' => $release['published_at'] ?? null, 'notes' => mb_substr((string) ($release['body'] ?? ''), 0, 16000),
-            'components' => [], 'manifest' => $manifest];
+            'components' => $manifest['components'] ?? [], 'manifest' => $manifest];
     }
 }

@@ -8,11 +8,16 @@ use App\Models\Server;
 use App\Models\ServerMachine;
 use App\Models\ServerMachineLoadHistory;
 use App\Services\NodeSyncService;
+use App\Services\Updates\EnrollmentService;
+use App\Models\UpdateExecutor;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class MachineController extends Controller
 {
     private const INSTALL_VERSION_RULES = ['nullable', 'string', 'regex:/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-dev\.[1-9][0-9]*\.[1-9][0-9]*)?$/D'];
+    private const INSTALL_VERSION_EXACT_RULES = ['required', 'string', 'regex:/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-dev\.[1-9][0-9]*\.[1-9][0-9]*)?$/D'];
+    private const INSTALL_METHODS = ['systemd', 'docker', 'compose'];
 
     /**
      * 获取机器列表（附带关联节点数）
@@ -33,6 +38,7 @@ class MachineController extends Controller
                     'servers_count' => $machine->servers_count,
                     'created_at' => $machine->created_at,
                     'updated_at' => $machine->updated_at,
+                    'updater' => $this->updaterSummary($machine),
                 ];
             });
 
@@ -83,8 +89,7 @@ class MachineController extends Controller
 
         return $this->success([
             'id' => $machine->id,
-            'token' => $machine->token,
-            'install_command' => $this->buildInstallCommand($request, $machine),
+            'enrollment_status' => 'not_issued',
         ]);
     }
 
@@ -125,12 +130,19 @@ class MachineController extends Controller
     {
         $params = $request->validate([
             'id' => 'required|integer|exists:v2_server_machine,id',
+            'version' => self::INSTALL_VERSION_EXACT_RULES,
+            'mode' => ['required', Rule::in(self::INSTALL_METHODS)],
         ]);
 
         $machine = ServerMachine::find($params['id']);
+        if (!$machine->is_active) {
+            throw new ApiException('请先启用服务器后再生成安装命令。', 409);
+        }
 
         return $this->success([
-            'command' => $this->buildInstallCommand($request, $machine),
+            'command' => $this->buildInstallCommand($request, $machine, $params),
+            'enrollment_status' => 'issued',
+            'expires_in_minutes' => EnrollmentService::TTL_MINUTES,
         ]);
     }
 
@@ -211,22 +223,65 @@ class MachineController extends Controller
         return $this->success($history);
     }
 
-    private function buildInstallCommand(Request $request, ServerMachine $machine): string
+    private function buildInstallCommand(Request $request, ServerMachine $machine, array $params): string
     {
         $panelUrl = rtrim((string) (admin_setting('app_url') ?: $request->getSchemeAndHttpHost()), '/');
-        $params = $request->validate([
-            'version' => self::INSTALL_VERSION_RULES,
-        ]);
-        $version = $params['version'] ?? null;
-        $releasePath = $version ? 'download/' . $version : 'latest/download';
-        $installerUrl = 'https://github.com/VoidInTheShell/Xboard-Node/releases/' . $releasePath . '/install.sh';
+        $enrollmentService = app(EnrollmentService::class);
+        // Reject a public HTTP panel before issuing the one-time token. The
+        // installer enforces the same contract, but must not be handed a token
+        // that can never reach its exchange endpoint.
+        $panelUrl = $enrollmentService->validatePanelUrl($panelUrl);
+        $version = $params['version'];
+        $executor = UpdateExecutor::query()
+            ->where('kind', 'panel')
+            ->where('enabled', true)
+            ->whereNotNull('updater_version')
+            ->latest('last_seen_at')
+            ->first();
+        if (!$executor || !$executor->online() || !$executor->protocolReady()) {
+            throw new ApiException('当前面板 Updater 尚未以兼容协议在线，请先完成 Updater 接入。', 409);
+        }
+        $updaterVersion = $executor->updater_version;
+        $enrollment = $enrollmentService->issue(
+            $machine,
+            $request->user()?->id ? (int) $request->user()->id : null,
+            $panelUrl
+        );
+        $installerUrl = 'https://github.com/VoidInTheShell/Xboard-Node/releases/download/' . $version . '/install.sh';
 
         return sprintf(
-            'curl -fsSL %s | sudo bash -s -- --mode machine --panel %s --token %s --machine-id %d',
+            'curl -fsSL %s | sudo bash -s -- --mode machine --panel %s --machine-id %d --enrollment-token %s --version %s --updater-version %s --installation-method %s',
             $installerUrl,
             escapeshellarg($panelUrl),
-            escapeshellarg($machine->token),
-            $machine->id
+            $machine->id,
+            escapeshellarg($enrollment['token']),
+            escapeshellarg($version),
+            escapeshellarg($updaterVersion),
+            escapeshellarg($params['mode'])
         );
+    }
+
+    private function updaterSummary(ServerMachine $machine): ?array
+    {
+        $executor = UpdateExecutor::query()
+            ->where('kind', 'node')
+            ->where('machine_id', $machine->id)
+            ->latest('last_seen_at')
+            ->first();
+        if (!$executor) return null;
+
+        $online = $executor->online();
+        return [
+            'online' => $online,
+            'ready' => $online && $executor->protocolReady() && !$executor->blocked,
+            'blocked' => (bool) $executor->blocked,
+            'protocol' => (int) $executor->protocol,
+            'state_schema' => (int) $executor->state_schema,
+            'updater_version' => $executor->updater_version,
+            'installation_method' => $executor->installation_method,
+            'architecture' => $executor->architecture,
+            'handoff_phase' => $executor->handoff_phase,
+            'last_seen_at' => $executor->last_seen_at,
+        ];
     }
 }

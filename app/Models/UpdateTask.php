@@ -14,7 +14,9 @@ class UpdateTask extends Model
     public function summary(): array
     {
         return ['task_id' => $this->id, 'target_name' => $this->target_name, 'target_version' => $this->target_version,
-            'status' => $this->status, 'message' => $this->message, 'created_at' => $this->created_at->toIso8601String(),
+            'target_updater_version' => $this->target_updater_version, 'status' => $this->status,
+            'handoff_phase' => $this->handoff_phase, 'recovery_step' => $this->recovery_step,
+            'message' => $this->message, 'created_at' => $this->created_at->toIso8601String(),
             'component' => $this->component, 'instance_id' => $this->instance_id, 'result' => $this->result];
     }
 }

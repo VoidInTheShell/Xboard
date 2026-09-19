@@ -7,6 +7,7 @@ use App\Models\ServerMachine;
 use App\Models\ServerRoute;
 use App\Models\User;
 use App\Services\Plugin\HookManager;
+use App\Services\Certificates\CertificateService;
 use App\Utils\CacheKey;
 use App\Utils\Helper;
 use Illuminate\Support\Facades\Cache;
@@ -433,8 +434,11 @@ class ServerService
             $response['custom_routes'] = $node['custom_routes'];
         }
 
-        if (!empty($node['cert_config'])) {
-            $certConfig = $node['cert_config'];
+        $certificate = app(CertificateService::class)->effectiveForNode($node);
+        $certConfig = $certificate
+            ? app(CertificateService::class)->toLegacyConfig($certificate)
+            : $node['cert_config'];
+        if (!empty($certConfig)) {
             // Normalize: accept both "mode" and "cert_mode" from the database
             if (isset($certConfig['mode']) && !isset($certConfig['cert_mode'])) {
                 $certConfig['cert_mode'] = $certConfig['mode'];
@@ -443,6 +447,13 @@ class ServerService
             if (data_get($certConfig, 'cert_mode') !== 'none') {
                 $response['cert_config'] = $certConfig;
             }
+        }
+        if ($certificate) {
+            // The legacy cert_config remains in the response during the
+            // compatibility window, while the stable resource identity lets
+            // machine-mode nodes share one certificate manager per resource.
+            $response['certificate_id'] = (string) $certificate->id;
+            $response['certificate_ref_mode'] = $node->certificate_ref_mode ?: 'server_certificate';
         }
 
         if (XrayConfigService::supports($node) && ($node->xray_config !== null || $node->outbound_bindings !== null || ($node->machine_id && $node->machine?->xray_config !== null))) {

@@ -146,6 +146,8 @@ class Server extends Model
         'u' => 'integer',
         'd' => 'integer',
         'machine_id' => 'integer',
+        'certificate_id' => 'string',
+        'certificate_ref_mode' => 'string',
     ];
 
     private const MULTIPLEX_CONFIGURATION = [
@@ -492,6 +494,16 @@ class Server extends Model
     public function machine(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo(ServerMachine::class, 'machine_id');
+    }
+
+    public function certificate(): BelongsTo
+    {
+        return $this->belongsTo(ServerCertificate::class, 'certificate_id');
+    }
+
+    public function certificateBindings(): HasMany
+    {
+        return $this->hasMany(ServerCertificateBinding::class, 'server_id');
     }
 
     public function groups()

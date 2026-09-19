@@ -64,7 +64,13 @@ class XrayConfigService
     private const CERT_MODES = ['none', 'http', 'dns', 'self', 'file', 'content'];
 
     private const CERT_FIELDS = [
-        'auto_tls', 'domain', 'email', 'cert_file', 'key_file', 'cert_dir',
+        // The latter three fields are panel-owned certificate resource
+        // metadata.  Node consumes them for multi-domain issuance and
+        // revision-aware renewal, so the control-plane preflight must accept
+        // and type-check them instead of rejecting an otherwise valid
+        // machine projection.
+        'auto_tls', 'domain', 'domains', 'auto_renew', 'revision', 'email',
+        'cert_file', 'key_file', 'cert_dir',
         'http_port', 'cert_mode', 'mode', 'dns_provider', 'dns_env',
         'cert_content', 'key_content',
     ];
@@ -542,12 +548,22 @@ class XrayConfigService
                 self::failAt("{$path}.{$field}", '证书字段不受支持。');
             }
             if ($item === null) continue;
-            if (in_array($field, ['auto_tls'], true) && !is_bool($item)) {
+            if (in_array($field, ['auto_tls', 'auto_renew'], true) && !is_bool($item)) {
                 self::failAt("{$path}.{$field}", '必须是布尔值。');
             }
-            if (in_array($field, ['http_port'], true)
+            if (in_array($field, ['http_port', 'revision'], true)
                 && (!is_int($item) && !(is_string($item) && ctype_digit(trim($item))))) {
                 self::failAt("{$path}.{$field}", '必须是整数。');
+            }
+            if ($field === 'domains') {
+                if (!is_array($item) || !array_is_list($item)) {
+                    self::failAt("{$path}.domains", '必须是字符串数组。');
+                }
+                foreach ($item as $index => $domain) {
+                    if (!is_string($domain) || trim($domain) === '') {
+                        self::failAt("{$path}.domains.{$index}", '域名必须是非空字符串。');
+                    }
+                }
             }
             if (in_array($field, ['dns_env'], true) && !is_array($item)) {
                 self::failAt("{$path}.{$field}", '必须是对象。');

@@ -172,7 +172,7 @@ class UpdateManager
             throw new ApiException('Admin 更新回执缺少交接阶段。', 422);
         }
         if (!in_array($input['status'], self::HANDOFF_PHASE_STATUS[$phase] ?? [], true)) {
-            throw new ApiException('交接阶段与任务状态不一致。', 422);
+            throw new ApiException('交接阶段与任务状态冲突。', 409);
         }
         if (!$this->handoffTransitionAllowed($task->handoff_phase, $phase)) {
             throw new ApiException('更新交接阶段转换无效。', 409);

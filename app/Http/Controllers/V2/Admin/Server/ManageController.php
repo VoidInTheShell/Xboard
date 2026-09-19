@@ -83,7 +83,10 @@ class ManageController extends Controller
                 });
                 return $this->success(true);
             } catch (\Exception $e) {
-                if ($e instanceof \App\Exceptions\ApiException) throw $e;
+                if ($e instanceof \App\Exceptions\ApiException
+                    || $e instanceof \Illuminate\Validation\ValidationException) {
+                    throw $e;
+                }
                 Log::error($e);
                 return $this->fail([500, '保存失败']);
             }
@@ -109,7 +112,10 @@ class ManageController extends Controller
             });
             return $this->success(true);
         } catch (\Exception $e) {
-            if ($e instanceof \App\Exceptions\ApiException) throw $e;
+            if ($e instanceof \App\Exceptions\ApiException
+                || $e instanceof \Illuminate\Validation\ValidationException) {
+                throw $e;
+            }
             Log::error($e);
             return $this->fail([500, '创建失败']);
         }
@@ -204,6 +210,9 @@ class ManageController extends Controller
         } catch (ApiException $e) {
             throw $e;
         } catch (\Exception $e) {
+            if ($e instanceof \Illuminate\Validation\ValidationException) {
+                throw $e;
+            }
             Log::error($e);
             return $this->fail([500, '保存失败']);
         }

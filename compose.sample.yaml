@@ -95,6 +95,7 @@ services:
       - ${XBOARD_DEPLOY_DIR}/.docker/.data:/www/.docker/.data
       - ${XBOARD_DEPLOY_DIR}/deploy/updater/bootstrap.sh:/bootstrap/bootstrap.sh:ro
       - ${XBOARD_DEPLOY_DIR}/deploy/updater/panel-hook.sh:/bootstrap/panel-hook.sh:ro
+      - ${XBOARD_ENV_FILE:-${XBOARD_DEPLOY_DIR}/.env}:/bootstrap/deploy.env:ro
       - updater-config:/etc/xboard-updater
       - updater-state:/var/lib/xboard-updater
     environment:
@@ -132,10 +133,6 @@ services:
       - updater-config:/etc/xboard-updater
       - updater-state:/var/lib/xboard-updater
       - updater-backups:/var/lib/xboard-updater/backups
-      # Compose runs inside the updater container. Keep the host env file
-      # read-only, but expose it at a stable container path so rootless/userns
-      # host permissions cannot make version inspection or handoff fail.
-      - ${XBOARD_ENV_FILE:-${XBOARD_DEPLOY_DIR}/.env}:/etc/xboard-updater/deploy.env:ro
       # This exact path must exist on the host. The updater passes it to the
       # host Docker daemon for Compose operations and never mounts / from host.
       - ${XBOARD_DEPLOY_DIR}:${XBOARD_DEPLOY_DIR}

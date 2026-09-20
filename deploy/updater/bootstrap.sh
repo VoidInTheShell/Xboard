@@ -20,6 +20,7 @@ umask 077
 
 config_dir=/etc/xboard-updater
 state_dir=/var/lib/xboard-updater
+compose_env_source=/bootstrap/deploy.env
 token_file="$config_dir/token"
 config_file="$config_dir/config.json"
 
@@ -118,6 +119,7 @@ chmod 600 "$token_file"
 install -m 700 /bootstrap/panel-hook.sh "$config_dir/panel-hook.sh"
 printf '%s\n' "$XBOARD_BACKEND_CONTAINER" > "$config_dir/backend-container"
 chmod 600 "$config_dir/backend-container"
+install -m 600 "$compose_env_source" "$config_dir/deploy.env"
 
 export XBOARD_COMPOSE_FILE XBOARD_ENV_FILE XBOARD_HEALTH_URL XBOARD_ADMIN_HEALTH_URL
 export XBOARD_COMPOSE_PROJECT XBOARD_BACKEND_CONTAINER

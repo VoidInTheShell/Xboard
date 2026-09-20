@@ -75,7 +75,8 @@ is_tagged_ghcr_image() {
 [ "$(id -u)" = "0" ] || fail "this trusted deployment script must run as root"
 [[ "$GIT_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "the release SHA is invalid"
 [ "$(realpath -m "$TARGET_DIR")" = "$EXPECTED_TARGET" ] || fail "unexpected production target"
-install -o root -g root -d -m 750 "$TARGET_DIR" "$TARGET_DIR/backups"
+install -o root -g root -d -m 751 "$TARGET_DIR" "$TARGET_DIR/backups"
+chmod o+x "$(dirname "$(dirname "$TARGET_DIR")")" "$(dirname "$TARGET_DIR")"
 exec 9>"$TARGET_DIR/.deploy.lock"
 flock -x 9
 log "acquired production deployment lock"

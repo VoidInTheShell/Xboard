@@ -4,7 +4,9 @@ name: xboard
 # Redis process layout, while Admin, Updater and the one-shot bootstrap run as
 # separate services. Set XBOARD_DEPLOY_DIR to the same absolute path on the
 # host and inside xboard-updater; the updater must be able to hand the exact
-# Compose file path to the host Docker daemon.
+# Compose file path to the host Docker daemon. The deployment directory and
+# its parent paths must be traversable by the user-namespaced updater (usually
+# mode 0751/0755); keep .env and secrets at 0600.
 
 x-container-logging: &container-logging
   driver: json-file
@@ -104,6 +106,7 @@ services:
       XBOARD_DEPLOY_DIR: ${XBOARD_DEPLOY_DIR}
       XBOARD_COMPOSE_FILE: ${XBOARD_COMPOSE_FILE:-${XBOARD_DEPLOY_DIR}/compose.yaml}
       XBOARD_ENV_FILE: ${XBOARD_ENV_FILE:-${XBOARD_DEPLOY_DIR}/.env}
+      XBOARD_COMPOSE_EXTRA_FILE: ${XBOARD_COMPOSE_EXTRA_FILE:-}
       XBOARD_HEALTH_URL: ${XBOARD_HEALTH_URL:-http://xboard-app:7001/}
       XBOARD_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-xboard}
       XBOARD_BACKEND_CONTAINER: xboard-app

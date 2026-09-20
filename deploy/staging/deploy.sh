@@ -73,7 +73,7 @@ is_tagged_ghcr_image "$XBOARD_ADMIN_IMAGE" xboard-admin || fail "XBOARD_ADMIN_IM
 IFS= read -r REGISTRY_TOKEN || true
 [ -n "${REGISTRY_TOKEN:-}" ] || fail "registry token was not provided on stdin"
 
-install -d -m 750 "$TARGET_DIR"
+install -d -m 751 "$TARGET_DIR"
 exec 9>"$TARGET_DIR/.deploy.lock"
 flock -x 9
 log "acquired deployment lock"
@@ -123,6 +123,7 @@ compose() {
 trap on_exit EXIT
 
 sudo -n chown beihai:beihai "$TARGET_DIR"
+sudo -n chmod o+x "$(dirname "$(dirname "$TARGET_DIR")")" "$(dirname "$TARGET_DIR")"
 install -d -m 700 "$TARGET_DIR/secrets"
 install -d -m 755 "$TARGET_DIR/data" "$TARGET_DIR/logs" "$TARGET_DIR/plugins" "$TARGET_DIR/themes" "$TARGET_DIR/uploads" "$TARGET_DIR/bootstrap"
 install -d -m 700 "$TARGET_DIR/backups"

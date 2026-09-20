@@ -17,6 +17,7 @@ umask 077
 # two images are published independently.
 : "${XBOARD_UPDATER_VERSION:=${XBOARD_ADMIN_VERSION}}"
 : "${XBOARD_ADMIN_HEALTH_URL:=http://xboard-admin/healthz}"
+: "${XBOARD_COMPOSE_EXTRA_FILE:=}"
 
 config_dir=/etc/xboard-updater
 state_dir=/var/lib/xboard-updater
@@ -30,7 +31,7 @@ install -d -m 700 "$config_dir" "$state_dir" "$state_dir/backups"
 # accepted for loopback development endpoints; a public panel must use HTTPS.
 # Version values are used as Docker tags, so reject path separators and other
 # characters that could turn the configured image into an unintended reference.
-export XBOARD_PANEL_URL XBOARD_ADMIN_VERSION XBOARD_UPDATER_VERSION XBOARD_DEPLOY_DIR
+export XBOARD_PANEL_URL XBOARD_ADMIN_VERSION XBOARD_UPDATER_VERSION XBOARD_DEPLOY_DIR XBOARD_COMPOSE_EXTRA_FILE
 php -r '
 $panelURL = getenv("XBOARD_PANEL_URL");
 $parts = is_string($panelURL) ? parse_url($panelURL) : false;
@@ -141,6 +142,11 @@ $hook = [
     "resume" => ["/etc/xboard-updater/panel-hook.sh", "resume", "{task_dir}"],
 ];
 $composeEnvFile = "/etc/xboard-updater/deploy.env";
+$extraCompose = [];
+$extraComposeFile = getenv("XBOARD_COMPOSE_EXTRA_FILE");
+if (is_string($extraComposeFile) && $extraComposeFile !== "") {
+    $extraCompose[] = $extraComposeFile;
+}
 $targets = [
     [
         "id" => "backend",
@@ -149,6 +155,7 @@ $targets = [
         "method" => "compose",
         "compose_file" => getenv("XBOARD_COMPOSE_FILE"),
         "compose_env_file" => $composeEnvFile,
+        "compose_extra_files" => $extraCompose,
         "compose_project" => getenv("XBOARD_COMPOSE_PROJECT"),
         "compose_service" => "xboard",
         "health_url" => getenv("XBOARD_HEALTH_URL"),
@@ -160,6 +167,7 @@ $targets = [
         "method" => "compose",
         "compose_file" => getenv("XBOARD_COMPOSE_FILE"),
         "compose_env_file" => $composeEnvFile,
+        "compose_extra_files" => $extraCompose,
         "compose_project" => getenv("XBOARD_COMPOSE_PROJECT"),
         "compose_service" => "xboard-admin",
         "health_url" => getenv("XBOARD_ADMIN_HEALTH_URL"),

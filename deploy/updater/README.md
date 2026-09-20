@@ -46,7 +46,7 @@ Admin 的“版本更新”和 MCP 使用相同的持久化任务接口。用户
 
 - `systemd`：填写单个 Node 的准确 `binary` 和 `service`；同一个二进制或 systemd 服务不能重复登记为多个实例。Node 的 `node`、`machine`、`standalone` 运行模式均以实际安装为界；一个进程管理多个入站仍然是一个更新实例。
 - `docker`：只管理填写的准确容器名，保留环境变量、端口、挂载、网络和重启策略；保留旧容器供恢复。不支持 `--rm` 容器和手工静态 IP 容器，后者请改为 Compose 管理。容器可写层中的业务数据不会迁移，配置、证书、数据库和业务文件必须持久化挂载。已有 `--volumes-from` 共享请改为显式挂载，避免依赖被替换的容器。
-- `compose`：填写绝对 `compose_file`、原 `compose_project` 和单个 `compose_service`。部署使用独立环境文件时，填写绝对路径 `compose_env_file`（例如 `/home/beihai/docker/xboard/.deploy.env`），每次查询和升级都会加载该文件。仅对该服务执行 `up --no-deps`，不会连带更新其他组件。Compose 使用固定宿主端口；健康地址须能从宿主机直达目标服务，不能只检查另一台反代的静态页面。
+- `compose`：填写绝对 `compose_file`、原 `compose_project` 和单个 `compose_service`。独立部署的更新器必须能从自身容器/进程读取 `compose_env_file`；默认多容器安装会把宿主机环境文件只读挂载到 `/etc/xboard-updater/deploy.env`，并在登记目标中使用这个容器内路径，避免宿主机权限或 user namespace 导致版本查询和交接失败。仅对该服务执行 `up --no-deps`，不会连带更新其他组件。Compose 使用固定宿主端口；健康地址须能从宿主机直达目标服务，不能只检查另一台反代的静态页面。
 
 Compose 的版本选择持久化在 `/var/lib/xboard-updater/compose-<project>.json`；这个文件包含同项目各组件各自的选择。后续手工启动或运维脚本必须继续加载此文件，否则原始 Compose/.env 的旧镜像会覆盖手动选择：
 

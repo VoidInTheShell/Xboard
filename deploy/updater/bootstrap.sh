@@ -138,6 +138,7 @@ $hook = [
     "restore" => ["/etc/xboard-updater/panel-hook.sh", "restore", "{task_dir}"],
     "resume" => ["/etc/xboard-updater/panel-hook.sh", "resume", "{task_dir}"],
 ];
+$composeEnvFile = "/etc/xboard-updater/deploy.env";
 $targets = [
     [
         "id" => "backend",
@@ -145,7 +146,7 @@ $targets = [
         "component" => "xboard",
         "method" => "compose",
         "compose_file" => getenv("XBOARD_COMPOSE_FILE"),
-        "compose_env_file" => getenv("XBOARD_ENV_FILE"),
+        "compose_env_file" => $composeEnvFile,
         "compose_project" => getenv("XBOARD_COMPOSE_PROJECT"),
         "compose_service" => "xboard",
         "health_url" => getenv("XBOARD_HEALTH_URL"),
@@ -156,7 +157,7 @@ $targets = [
         "component" => "xboard-admin",
         "method" => "compose",
         "compose_file" => getenv("XBOARD_COMPOSE_FILE"),
-        "compose_env_file" => getenv("XBOARD_ENV_FILE"),
+        "compose_env_file" => $composeEnvFile,
         "compose_project" => getenv("XBOARD_COMPOSE_PROJECT"),
         "compose_service" => "xboard-admin",
         "health_url" => getenv("XBOARD_ADMIN_HEALTH_URL"),

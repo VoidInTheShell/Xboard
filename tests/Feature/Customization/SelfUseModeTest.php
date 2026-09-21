@@ -12,6 +12,8 @@ use App\Http\Controllers\V2\Admin\Server\MachineController;
 use App\Models\ServerMachine;
 use App\Models\UpdateExecutor;
 use App\Models\User;
+use App\Services\Updates\ReleaseCatalog;
+use App\Exceptions\ApiException;
 use App\Support\Setting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -103,6 +105,10 @@ class SelfUseModeTest extends TestCase
     public function test_machine_install_command_uses_the_forked_node_installer(): void
     {
         Sanctum::actingAs($this->makeUser(['is_admin' => true]));
+        $this->mock(ReleaseCatalog::class, function ($catalog) {
+            $catalog->shouldReceive('exact')->with('xboard-node', 'v1.14.0-dev.1234.1')
+                ->andReturn(['component' => 'xboard-node', 'version' => 'v1.14.0-dev.1234.1', 'channel' => 'dev']);
+        });
         UpdateExecutor::create([
             'id' => (string) Str::uuid(),
             'name' => 'panel-updater',
@@ -149,6 +155,25 @@ class SelfUseModeTest extends TestCase
             $pinned
         );
         $this->assertStringNotContainsString('/releases/latest/', $pinned);
+    }
+
+    public function test_machine_install_command_rejects_unknown_versions(): void
+    {
+        Sanctum::actingAs($this->makeUser(['is_admin' => true]));
+        $this->mock(ReleaseCatalog::class, function ($catalog) {
+            $catalog->shouldReceive('exact')->andThrow(new ApiException('版本发布不完整或清单不符合更新协议。', 422));
+        });
+        $machine = ServerMachine::create([
+            'name' => 'test-machine',
+            'token' => 'test-machine-token',
+            'is_active' => true,
+        ]);
+
+        $this->postJson($this->routePath(MachineController::class . '@installCommand'), [
+            'id' => $machine->id,
+            'version' => 'v9.9.9-dev.1.1',
+            'mode' => 'compose',
+        ])->assertStatus(422);
     }
 
     private function makeUser(array $attributes = []): User

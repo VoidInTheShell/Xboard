@@ -24,6 +24,20 @@ class UpdateController extends Controller
         return $this->success($this->updates->overview($data['target_kind']));
     }
     public function releases(Request $request) { return $this->success($this->updates->releases($this->target($request))); }
+
+    /** Install flows for machines that have not enrolled yet have no instance context. */
+    public function nodeReleases(Request $request)
+    {
+        $data = $request->validate(['channel' => ['required', Rule::in(['stable', 'dev'])]]);
+        return $this->success($this->updates->componentReleases('xboard-node', $data['channel']));
+    }
+
+    /** 中止一个未结束的更新任务，释放被卡住的执行器。 */
+    public function abort(Request $request)
+    {
+        $data = $request->validate(['task_id' => 'required|uuid']);
+        return $this->success($this->updates->abort($data, (int) $request->user()->id));
+    }
     public function create(Request $request)
     {
         $data = $this->target($request) + $request->validate(['target_version' => 'required|string|max:100',

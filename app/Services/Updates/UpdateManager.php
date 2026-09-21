@@ -102,6 +102,38 @@ class UpdateManager
             return $item + ['compatible' => $reason === null, 'reason' => $reason];
         }, $this->catalog->releases($input['component'], $input['channel']));
     }
+
+    /** Instance-free release listing for install flows whose instance has not enrolled yet. */
+    public function componentReleases(string $component, string $channel): array
+    {
+        return array_map(function ($item) {
+            unset($item['manifest']);
+            return $item;
+        }, $this->catalog->releases($component, $channel));
+    }
+
+    /**
+     * 中止一个未结束的更新任务。执行器可能仍在运行；中止只结束面板侧任务
+     * 记录并复位交接状态，执行器随后的回执会被拒绝并丢弃。
+     */
+    public function abort(array $input, int $userId): array
+    {
+        return DB::transaction(function () use ($input, $userId) {
+            $task = UpdateTask::whereKey($input['task_id'])->lockForUpdate()->firstOrFail();
+            $executor = $this->lockExecutor($task->executor_id);
+            if (in_array($task->status, UpdateTask::TERMINAL, true)) {
+                throw new ApiException('任务已结束，无需中止。', 409);
+            }
+            $task->update(['status' => 'failed',
+                'message' => '管理员已中止任务；执行器未完成的动作以其本地恢复结果为准。',
+                'result' => ['aborted_by' => $userId, 'aborted_at' => now()->toIso8601String()],
+                'finished_at' => now()]);
+            if ($task->component === 'xboard-admin' && $executor->kind === 'panel' && $executor->handoff_phase) {
+                $executor->update(['handoff_phase' => null]);
+            }
+            return $task->summary();
+        });
+    }
     public function create(array $input, int $userId): UpdateTask
     {
         $instance = $this->instance($input);

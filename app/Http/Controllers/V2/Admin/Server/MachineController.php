@@ -9,6 +9,7 @@ use App\Models\ServerMachine;
 use App\Models\ServerMachineLoadHistory;
 use App\Services\NodeSyncService;
 use App\Services\Updates\EnrollmentService;
+use App\Services\Updates\ReleaseCatalog;
 use App\Models\UpdateExecutor;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -18,6 +19,8 @@ class MachineController extends Controller
     private const INSTALL_VERSION_RULES = ['nullable', 'string', 'regex:/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-dev\.[1-9][0-9]*\.[1-9][0-9]*)?$/D'];
     private const INSTALL_VERSION_EXACT_RULES = ['required', 'string', 'regex:/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-dev\.[1-9][0-9]*\.[1-9][0-9]*)?$/D'];
     private const INSTALL_METHODS = ['systemd', 'docker', 'compose'];
+
+    public function __construct(private readonly ReleaseCatalog $catalog) {}
 
     /**
      * 获取机器列表（附带关联节点数）
@@ -138,6 +141,9 @@ class MachineController extends Controller
         if (!$machine->is_active) {
             throw new ApiException('请先启用服务器后再生成安装命令。', 409);
         }
+        // Reject unknown versions here instead of letting the generated curl
+        // fail on the target machine.
+        $this->catalog->exact('xboard-node', $params['version']);
 
         return $this->success([
             'command' => $this->buildInstallCommand($request, $machine, $params),

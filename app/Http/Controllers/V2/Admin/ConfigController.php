@@ -141,6 +141,9 @@ class ConfigController extends Controller
                 'self_use_mode' => (bool) admin_setting('self_use_mode', 0),
                 'user_login_title' => admin_setting('user_login_title'),
                 'user_login_description' => admin_setting('user_login_description'),
+                'admin_login_background' => admin_setting('admin_login_background'),
+                'admin_login_glass_opacity' => (int) admin_setting('admin_login_glass_opacity', 60),
+                'admin_login_mask_opacity' => (int) admin_setting('admin_login_mask_opacity', 40),
                 'user_hidden_menus' => (array) admin_setting('user_hidden_menus', []),
                 'admin_hidden_menus' => (array) admin_setting('admin_hidden_menus', []),
                 'user_support_enabled' => (bool) admin_setting('user_support_enabled', 1),
@@ -260,14 +263,37 @@ class ConfigController extends Controller
             'file.max' => '站点 Logo 不能超过 2 MB',
         ]);
 
+        return $this->storeSiteBrandingImage($request, 'logo', 'png');
+    }
+
+    public function uploadLoginBackground(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:png,jpg,jpeg,webp|max:8192',
+        ], [
+            'file.mimes' => '登录背景必须为 PNG、JPG 或 WebP 图片',
+            'file.max' => '登录背景不能超过 8 MB',
+        ]);
+
+        $extension = strtolower($request->file('file')->getClientOriginalExtension() ?: 'png');
+        $extension = in_array($extension, ['png', 'jpg', 'jpeg', 'webp'], true) ? $extension : 'png';
+        return $this->storeSiteBrandingImage($request, 'admin_login_background', $extension);
+    }
+
+    /**
+     * Store a managed site-branding image and replace the previous managed
+     * file for the same setting so uploads never accumulate.
+     */
+    private function storeSiteBrandingImage(Request $request, string $setting, string $extension): array
+    {
         $file = $request->file('file');
-        $filename = 'logo-' . substr(hash_file('sha256', $file->getRealPath()), 0, 16) . '.png';
+        $filename = $setting . '-' . substr(hash_file('sha256', $file->getRealPath()), 0, 16) . '.' . $extension;
         $path = Storage::disk('public')->putFileAs('site-branding', $file, $filename);
         if (!$path) {
-            return $this->fail([500, '站点 Logo 上传失败']);
+            return $this->fail([500, '图片上传失败']);
         }
 
-        $previous = admin_setting('logo');
+        $previous = admin_setting($setting);
         $previousPath = is_string($previous) ? parse_url($previous, PHP_URL_PATH) : null;
         if (is_string($previousPath) && str_starts_with($previousPath, '/storage/site-branding/')) {
             $managedPath = substr($previousPath, strlen('/storage/'));

@@ -79,16 +79,16 @@ class UsageController extends \App\Http\Controllers\V1\User\UsageController
         $this->actor($request);
         $request->validate(['machine_id' => 'required|integer|min:1']);
         $machine = ServerMachine::findOrFail($request->integer('machine_id'));
-        $policy = $machine->traffic_policy ?? self::defaultPolicy();
-        [$start, $end] = self::cycle($policy);
-        $usage = \App\Services\Usage\UsageSettings::get('enabled') ? DB::table('v2_usage_traffic')->where('layer', 'nic')
-            ->where('machine_id', $machine->id)->whereBetween('bucket', [$start, $end - 1])
-            ->selectRaw('COALESCE(SUM(up),0) as incoming, COALESCE(SUM(down),0) as outgoing')->first() : null;
-        $incoming = (int) ($usage?->incoming ?? 0);
-        $outgoing = (int) ($usage?->outgoing ?? 0);
-        return $this->success(['policy' => $policy, 'cycle' => ['start' => $start, 'end' => $end],
-            'incoming' => (string) $incoming, 'outgoing' => (string) $outgoing,
-            'used' => (string) match($policy['direction']) {'upload' => $incoming, 'download' => $outgoing, default => $incoming + $outgoing}]);
+        $service = app(MachineTrafficService::class);
+        $policyArray = array_replace(MachineTrafficService::defaultPolicy(), (array) ($machine->traffic_policy ?? []));
+        $usage = \App\Services\Usage\UsageSettings::get('enabled') ? $service->cycleUsage($machine) : null;
+        [$start, $end] = $usage ? $usage['cycle'] : MachineTrafficService::cycle($policyArray);
+        $calibration = $service->activeCalibration($policyArray, $start);
+        $policyOut = array_diff_key($policyArray, ['calibration' => true]);
+        return $this->success(['policy' => $policyOut, 'cycle' => ['start' => $start, 'end' => $end],
+            'incoming' => (string) ($usage['incoming'] ?? 0), 'outgoing' => (string) ($usage['outgoing'] ?? 0),
+            'used' => (string) ($usage['used'] ?? 0),
+            'calibration' => $calibration ? ['used_bytes' => (string) $calibration['used_bytes'], 'at' => (int) $calibration['at']] : null]);
     }
 
     public function savePolicy(Request $request)
@@ -99,11 +99,36 @@ class UsageController extends \App\Http\Controllers\V1\User\UsageController
             'unit' => 'required|in:GiB,TiB', 'resetDay' => 'required|integer|min:1|max:31',
             'zone' => 'required|in:UTC,Asia/Shanghai,Asia/Tokyo', 'direction' => 'required|in:both,upload,download',
             'warning' => 'required|integer|min:1|max:100',
+            'calibration' => 'nullable|array',
+            'calibration.value' => 'nullable|numeric|gte:0|max:100000000',
+            'calibration.unit' => 'nullable|in:GiB,TiB',
+            'calibration.clear' => 'nullable|boolean',
         ]);
         $machine = ServerMachine::findOrFail($data['machine_id']);
         unset($data['machine_id']);
+        $calibrationInput = $request->input('calibration');
+        if (is_array($calibrationInput) && empty($calibrationInput['clear'])) {
+            abort_unless(isset($calibrationInput['value'], $calibrationInput['unit']), 422, '流量校准需要同时提供数值和单位');
+        }
+        unset($data['calibration']);
         // Existing log middleware audits changes; saving policy never clears history.
-        $machine->update(['traffic_policy' => $data]);
+        // Absent calibration input keeps the stored snapshot; an explicit payload
+        // replaces or clears it against the policy being saved.
+        $policy = array_replace(MachineTrafficService::defaultPolicy(), (array) $machine->traffic_policy, $data);
+        if (is_array($calibrationInput)) {
+            if (!empty($calibrationInput['clear'])) {
+                unset($policy['calibration']);
+            } else {
+                $unit = ($calibrationInput['unit'] ?? 'GiB') === 'TiB' ? 1099511627776 : 1073741824;
+                $policy['calibration'] = [
+                    'cycle_start' => MachineTrafficService::cycle($policy)[0],
+                    'used_bytes' => (int) round((float) ($calibrationInput['value'] ?? 0) * $unit),
+                    'at' => time(),
+                ];
+            }
+        }
+        $machine->update(['traffic_policy' => $policy]);
+        $data['calibration'] = $policy['calibration'] ?? null;
         return $this->success($data);
     }
 

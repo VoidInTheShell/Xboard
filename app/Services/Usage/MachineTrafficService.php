@@ -24,18 +24,44 @@ class MachineTrafficService
     {
         $policy = array_replace(self::defaultPolicy(), (array) ($machine->traffic_policy ?? []));
         $limit = (float) $policy['limit'];
+        $unit = $policy['unit'] === 'TiB' ? 1099511627776 : 1073741824;
         if ($limit <= 0) {
-            return ['remaining_bytes' => null, 'unlimited' => true];
+            return ['remaining_bytes' => null, 'used_bytes' => null, 'limit_bytes' => null, 'unlimited' => true];
         }
+        $limitBytes = (int) round($limit * $unit);
         if (!UsageSettings::get('enabled')) {
-            return ['remaining_bytes' => null, 'unlimited' => false];
+            return ['remaining_bytes' => null, 'used_bytes' => null, 'limit_bytes' => $limitBytes, 'unlimited' => false];
         }
 
+        $usage = $this->cycleUsage($machine);
+        return [
+            'remaining_bytes' => max(0, $limitBytes - $usage['used']),
+            'used_bytes' => $usage['used'],
+            'limit_bytes' => $limitBytes,
+            'unlimited' => false,
+        ];
+    }
+
+    /**
+     * Cycle usage with incoming/outgoing split. A calibration snapshot, when
+     * present and still inside the current cycle, replaces the usage counted
+     * before it; panel statistics then accumulate from the next full hour.
+     */
+    public function cycleUsage(ServerMachine $machine): array
+    {
+        $policy = array_replace(self::defaultPolicy(), (array) ($machine->traffic_policy ?? []));
         [$start, $end] = self::cycle($policy);
+        $calibration = $this->activeCalibration($policy, $start);
+        $sumFrom = $start;
+        $baseline = 0;
+        if ($calibration !== null) {
+            $baseline = (int) $calibration['used_bytes'];
+            $sumFrom = max($start, (intdiv((int) $calibration['at'], 3600) + 1) * 3600);
+        }
         $usage = DB::table('v2_usage_traffic')
             ->where('layer', 'nic')
             ->where('machine_id', $machine->id)
-            ->whereBetween('bucket', [$start, $end - 1])
+            ->whereBetween('bucket', [$sumFrom, $end - 1])
             ->selectRaw('COALESCE(SUM(up),0) as incoming, COALESCE(SUM(down),0) as outgoing')
             ->first();
         $incoming = (int) ($usage?->incoming ?? 0);
@@ -45,13 +71,31 @@ class MachineTrafficService
             'download' => $outgoing,
             default => $incoming + $outgoing,
         };
-        $unit = $policy['unit'] === 'TiB' ? 1099511627776 : 1073741824;
-        $limitBytes = (int) round($limit * $unit);
 
         return [
-            'remaining_bytes' => max(0, $limitBytes - $used),
-            'unlimited' => false,
+            'incoming' => $incoming,
+            'outgoing' => $outgoing,
+            'used' => $baseline + $used,
+            'baseline' => $baseline,
+            'cycle' => [$start, $end],
+            'calibration' => $calibration,
         ];
+    }
+
+    /**
+     * Return the calibration snapshot only when it was recorded for the cycle
+     * that is currently in progress; a reset-day change invalidates it.
+     */
+    public function activeCalibration(array $policy, int $cycleStart): ?array
+    {
+        $calibration = (array) ($policy['calibration'] ?? null);
+        $usedBytes = (int) ($calibration['used_bytes'] ?? -1);
+        $at = (int) ($calibration['at'] ?? 0);
+        if ($usedBytes < 0 || $at <= 0 || (int) ($calibration['cycle_start'] ?? 0) !== $cycleStart) {
+            return null;
+        }
+
+        return ['cycle_start' => $cycleStart, 'used_bytes' => $usedBytes, 'at' => $at];
     }
 
     public static function defaultPolicy(): array

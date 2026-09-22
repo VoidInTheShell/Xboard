@@ -1,6 +1,6 @@
 # Xboard staging deployment
 
-This directory defines the shared Xboard test stack on GJHK. Pushes to `dev` deploy automatically. Any other branch can deploy only through `workflow_dispatch` selected on that branch. Every deployment uses prebuilt GHCR images; the server never compiles source code. After a feature-branch acceptance run, dispatch `dev` again so the shared environment returns to its development baseline.
+This directory defines the shared Xboard test stack on GJHK. **CI deployment is suspended (since 2026-09-15):** the staging deploy job is hard-disabled with a `false &&` guard, so pushes and manual dispatches only build, test, and publish releases. GJHK is updated through the panel's Admin version-update UI (or MCP update tasks) by selecting an exact published version; the deploy assets in this directory are retained as the documented manual emergency/recovery path, and re-enabling CI deployment requires an explicit decision and a workflow change. Historically, pushes to `dev` deployed automatically and other branches deployed through `workflow_dispatch`; every deployment used prebuilt GHCR images and the server never compiled source code. The environment-topology details below (including the retired US2 node cover entrypoint) describe that historical staging baseline; the current GJHK installation (2026-09-22) is the four-service Compose stack defined by the repository's `compose.sample.yaml` plus the updater bootstrap.
 
 Every branch push and pull request builds a CI-only image with Composer development dependencies and runs the PHP test suite. Published runtime images keep development dependencies excluded. A full stack rebuild consumes GHCR version tags for the backend, Theme, and standalone Admin. Each publish run adds a `build-<run_id>-<run_attempt>` tag, and the staging job uses that tag directly without looking up or rewriting image digests. Deployments verify the default standalone Admin, an actual secure-path change, the explicit built-in-panel fallback, and restoration of the default standalone entry without printing authentication tokens.
 
@@ -61,7 +61,7 @@ Do not publish the staging node DNS record until the US2 reverse proxy and cover
 
 The remote script hard-checks the target and incoming bundle paths, then takes `/home/beihai/docker/xboard/.deploy.lock`. Before a migration it stops the App, creates a WAL-safe SQLite snapshot, and compares protected table counts after bootstrap. A regression restores the verified pre-deploy snapshot and leaves the Actions run red without printing externally supplied administrator credentials.
 
-To deploy a feature branch, open `Docker Build, Publish and Deploy`, choose **Run workflow**, select that branch, and run it. Do not replace the image manually over SSH. To inspect the server without changing it:
+The historical branch-dispatch deployment path is suspended with the deploy guard; staging updates now go through the Admin version-update UI. Do not replace the image manually over SSH. To inspect the server without changing it:
 
 ```bash
 cd /home/beihai/docker/xboard

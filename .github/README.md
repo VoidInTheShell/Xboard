@@ -1,8 +1,9 @@
 # Versioned releases
 
 This repository publishes xboard from its own source. Release configuration is in
-release-config.json; next_version is currently 1.1.0 and must be advanced for
-the next development cycle after a formal release.
+release-config.json; next_version is currently 1.1.0. The formal v1.1.0 is
+already published, so this value must be advanced before the next formal
+release; the requested version must equal the advanced next_version.
 
 ## Publish
 

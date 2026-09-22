@@ -20,7 +20,7 @@ on:
         required: false
         type: string
       deployment_target:
-        description: Choose whether this manual dispatch rebuilds staging or deploys JPGREEN production.
+        description: Legacy staging/production selector. Deploy jobs are disabled by false guards, so manual dispatch only builds, tests, and publishes. Retained for the recovery path.
         required: false
         default: staging
         type: choice
@@ -28,19 +28,19 @@ on:
           - staging
           - production
       dk_theme_image:
-        description: DK Theme GHCR image with version tag for this full-stack rebuild. Defaults to the staging Environment variable.
+        description: DK Theme GHCR image with version tag for the (currently disabled) full-stack rebuild job. Defaults to the staging Environment variable.
         required: false
         type: string
       xboard_admin_image:
-        description: Xboard-Admin GHCR image with version tag for this full-stack rebuild. Defaults to the staging Environment variable.
+        description: Xboard-Admin GHCR image with version tag for the (currently disabled) full-stack rebuild job. Defaults to the staging Environment variable.
         required: false
         type: string
       production_dk_theme_image:
-        description: DK Theme GHCR image with version tag for a manual JPGREEN production deployment. Defaults to the production Environment variable.
+        description: DK Theme GHCR image with version tag for the (currently disabled) manual JPGREEN production deploy job. Defaults to the production Environment variable.
         required: false
         type: string
       production_xboard_admin_image:
-        description: Xboard-Admin GHCR image with version tag for a manual JPGREEN production deployment. Defaults to the production Environment variable.
+        description: Xboard-Admin GHCR image with version tag for the (currently disabled) manual JPGREEN production deploy job. Defaults to the production Environment variable.
         required: false
         type: string
       reset_jpgreen_data:

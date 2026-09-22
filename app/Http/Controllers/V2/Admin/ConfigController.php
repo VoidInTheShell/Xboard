@@ -284,7 +284,7 @@ class ConfigController extends Controller
      * Store a managed site-branding image and replace the previous managed
      * file for the same setting so uploads never accumulate.
      */
-    private function storeSiteBrandingImage(Request $request, string $setting, string $extension): array
+    private function storeSiteBrandingImage(Request $request, string $setting, string $extension)
     {
         $file = $request->file('file');
         $filename = $setting . '-' . substr(hash_file('sha256', $file->getRealPath()), 0, 16) . '.' . $extension;

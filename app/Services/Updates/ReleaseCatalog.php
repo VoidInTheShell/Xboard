@@ -7,8 +7,14 @@ use Illuminate\Support\Facades\Http;
 
 class ReleaseCatalog
 {
+    // 当前支持的任务协议与状态 schema。协议升级时只抬高当前值，MIN 保持
+    // 旧值：旧面板仍可列出并安装声明新协议的版本，由 Release 自带的新
+    // Updater 执行，避免协议升级后面板无法通过更新器自举的死锁。
     public const UPDATE_PROTOCOL = 2;
+    public const UPDATE_PROTOCOL_MIN = 2;
     public const STATE_SCHEMA = 1;
+    public const STATE_SCHEMA_MIN = 1;
+    public const PANEL_CONTRACT_MIN = 1;
 
     public const REPOSITORIES = [
         'xboard' => 'VoidInTheShell/Xboard', 'xboard-admin' => 'VoidInTheShell/xboard-admin',
@@ -16,8 +22,8 @@ class ReleaseCatalog
     ];
     public static function channel(?string $version): ?string
     {
-        if (preg_match('/\\Av[0-9]+\\.[0-9]+\\.[0-9]+\\z/', $version ?? '')) return 'stable';
-        if (preg_match('/\\Av[0-9]+\\.[0-9]+\\.[0-9]+-dev\\.[0-9]+\\.[0-9]+\\z/', $version ?? '')) return 'dev';
+        if (preg_match('/\Av[0-9]+\.[0-9]+\.[0-9]+\z/', $version ?? '')) return 'stable';
+        if (preg_match('/\Av[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+\.[0-9]+\z/', $version ?? '')) return 'dev';
         return null;
     }
     private function get(string $url): array
@@ -36,8 +42,10 @@ class ReleaseCatalog
             throw new ApiException('无效的组件或版本分支。', 422);
         }
         $repo = self::REPOSITORIES[$component];
-        // A bounded, cached catalogue; explicit selection is revalidated without the list cache.
-        return Cache::remember("updates.catalog.{$component}.{$channel}", 60, function () use ($repo, $component, $channel) {
+        // A bounded, cached catalogue; explicit selection is revalidated without
+        // the list cache. The longer window keeps repeated "check for updates"
+        // clicks from re-fetching GitHub release pages each time.
+        return Cache::remember("updates.catalog.{$component}.{$channel}", 300, function () use ($repo, $component, $channel) {
             $items = [];
             for ($page = 1; $page <= 10; $page++) {
                 $batch = $this->get("https://api.github.com/repos/{$repo}/releases?per_page=100&page={$page}");
@@ -77,32 +85,34 @@ class ReleaseCatalog
         $asset = $assets['release-manifest.json'] ?? [];
         $require(($asset['size'] ?? 0) > 0 && ($asset['size'] ?? 0) <= 262144);
         // Derive a trusted URL; never fetch a URL supplied by a manifest.
+        // Manifests are immutable per release, so they are cached: without this
+        // cache a single release listing fetched one manifest per version,
+        // exhausted the unauthenticated GitHub API quota and made release
+        // detection time out for the larger components.
         $url = "https://github.com/{$repo}/releases/download/{$version}/release-manifest.json";
-        $response = Http::connectTimeout(5)->timeout(20)->withOptions(['allow_redirects' => ['max' => 3, 'protocols' => ['https']]])->get($url);
-        if (!$response->successful()) throw new ApiException('读取版本清单失败，请重试。', 502);
-        $manifest = $response->json();
-        $require(strlen($response->body()) <= 262144 && is_array($manifest));
+        $manifest = Cache::remember("updates.manifest.{$component}.{$version}", 3600, function () use ($url) {
+            $response = Http::connectTimeout(5)->timeout(20)->withOptions(['allow_redirects' => ['max' => 3, 'protocols' => ['https']]])->get($url);
+            if (!$response->successful() || !is_array($response->json()) || strlen($response->body()) > 262144) {
+                // Listing skips this release; exact() surfaces a clear error.
+                throw new \UnexpectedValueException('Release manifest unavailable');
+            }
+            return $response->json();
+        });
+        if (!is_array($manifest)) throw new \UnexpectedValueException('Invalid manifest');
         $schema = (int) ($manifest['schema_version'] ?? 0);
-        // DK_Theme is intentionally outside this task's repository boundary.
-        // Keep its old catalogue readable while all executable update targets
-        // require the schema 2 protocol and state contract.
-        $legacyTheme = $component === 'dk_theme' && $schema === 1;
-        $require(($schema === 2 || $legacyTheme) && ($manifest['component'] ?? '') === $component
+        $require($schema === 2 && ($manifest['component'] ?? '') === $component
             && ($manifest['repository'] ?? '') === $repo && ($manifest['version'] ?? '') === $version
             && ($manifest['channel'] ?? '') === $channel);
         $require(in_array('linux/amd64', $manifest['platforms'] ?? [], true)
             && in_array('linux/arm64', $manifest['platforms'] ?? [], true));
-        if ($legacyTheme) {
-            $require(($manifest['image'] ?? '') === "ghcr.io/voidintheshell/{$component}:{$version}"
-                && ($manifest['compatibility']['update_protocol'] ?? null) === 1
-                && ($manifest['compatibility']['panel_contract'] ?? null) === 1);
-        } else {
-            $require(preg_match('/\\A[0-9a-fA-F]{40}\\z/', (string) ($manifest['source_commit'] ?? '')) === 1,
-                'Invalid source commit');
-            $require(($manifest['compatibility']['update_protocol'] ?? null) === self::UPDATE_PROTOCOL
-                && ($manifest['compatibility']['updater_state_schema'] ?? null) === self::STATE_SCHEMA
-                && ($manifest['compatibility']['panel_contract'] ?? null) === 1);
-        }
+        // Compatibility is a floor, not an exact match: a release declaring a
+        // newer protocol ships the updater that speaks it, so it stays
+        // listable and installable through the handoff.
+        $require(preg_match('/\A[0-9a-fA-F]{40}\z/', (string) ($manifest['source_commit'] ?? '')) === 1,
+            'Invalid source commit');
+        $require(($manifest['compatibility']['update_protocol'] ?? null) >= self::UPDATE_PROTOCOL_MIN
+            && ($manifest['compatibility']['updater_state_schema'] ?? null) >= self::STATE_SCHEMA_MIN
+            && ($manifest['compatibility']['panel_contract'] ?? null) >= self::PANEL_CONTRACT_MIN);
 
         if ($component === 'xboard-admin') {
             $artifacts = $manifest['artifacts'] ?? [];
@@ -114,7 +124,7 @@ class ReleaseCatalog
                 $require(($assets[$assetName]['size'] ?? 0) > 0);
                 $require(($artifacts['updater_binaries']["linux/{$arch}"] ?? '') === $prefix . "linux-{$arch}");
             }
-        } elseif (!$legacyTheme) {
+        } else {
             $require(($manifest['image'] ?? '') === "ghcr.io/voidintheshell/{$component}:{$version}");
         }
         if ($component === 'xboard-node') {

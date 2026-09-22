@@ -85,4 +85,4 @@ Admin 管理路径下：
 
 MCP 自动目录中的操作为 `update.overview.get`、`update.releases.get`、`update.task.get`、`update.tasks.post`，属于 `system` 权限域。通过 `xboard_admin_read` 查询；创建必须调用 `xboard_admin_mutate`，携带最新 `expected_change_version` 和 `confirmation: "CONFIRM update.tasks.post"`。沿用管理员校验和操作审计，MCP 不直接操作宿主机。
 
-执行器接口独立为 `POST /api/v2/update-executor/{heartbeat,claim,report}`，只接受专用 Bearer 凭据，并限制为登记的面板或节点宿主机。服务端固定自有 Release 来源和镜像名，不接受任意镜像、URL 或命令。目标仅接受 `vX.Y.Z` 或 `vX.Y.Z-dev.RUN_ID.ATTEMPT`；无有效发布清单的版本不能安装。手动降版仍需满足目标兼容性；后端应用版本降低不等于反向执行数据库迁移，不支持未经验证的跨 schema 降版。
+执行器接口独立为 `POST /api/v2/update-executor/{heartbeat,claim,report}`，只接受专用 Bearer 凭据，并限制为登记的面板或节点宿主机。服务端固定自有 Release 来源和镜像名，不接受任意镜像、URL 或命令。目标仅接受 `vX.Y.Z` 或 `vX.Y.Z-dev.RUN_ID.ATTEMPT`；无有效发布清单的版本不能安装。版本清单的兼容性按“下限”而非精确匹配校验：声明更高任务协议的版本仍可列出与安装，由该 Release 自带的新 Updater 执行交接，避免协议升级后面板无法自举；清单按发布不可变原则缓存一小时，发布列表缓存 5 分钟。手动降版仍需满足目标兼容性；后端应用版本降低不等于反向执行数据库迁移，不支持未经验证的跨 schema 降版。

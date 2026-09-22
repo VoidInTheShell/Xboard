@@ -63,9 +63,9 @@ class UpdateManager
         if (!$instance->ready) return $instance->reason ?: '更新器未就绪';
         if (!in_array($executor->architecture, $manifest['platforms'] ?? [], true)) return '目标版本不支持当前架构';
         if (!$executor->protocolReady()) return '更新器协议或状态版本不兼容';
-        if (($manifest['compatibility']['panel_contract'] ?? null) !== 1
-            || ($manifest['compatibility']['update_protocol'] ?? null) !== ReleaseCatalog::UPDATE_PROTOCOL
-            || ($manifest['compatibility']['updater_state_schema'] ?? null) !== ReleaseCatalog::STATE_SCHEMA) {
+        if (($manifest['compatibility']['panel_contract'] ?? null) < ReleaseCatalog::PANEL_CONTRACT_MIN
+            || ($manifest['compatibility']['update_protocol'] ?? null) < ReleaseCatalog::UPDATE_PROTOCOL_MIN
+            || ($manifest['compatibility']['updater_state_schema'] ?? null) < ReleaseCatalog::STATE_SCHEMA_MIN) {
             return '目标版本协议不兼容';
         }
         if ($executor->kind === 'panel') {
@@ -76,15 +76,22 @@ class UpdateManager
                 if (!$current || !ReleaseCatalog::channel($current->version)) return '请先登记后端和 Admin 的准确版本';
                 if (($current->capabilities['panel_contract'] ?? null) !== 1) return '当前组件组合的兼容性未确认';
             }
-            // Theme is optional. When the updater reports one, validate it; never
-            // create or upgrade it as a side effect.
-            $theme = $components->get('dk_theme');
-            if ($theme) {
-                if (!ReleaseCatalog::channel($theme->version)) return '请先登记 Theme 的准确版本';
-                if (($theme->capabilities['panel_contract'] ?? null) !== 1) return '当前组件组合的兼容性未确认';
+            // Theme is optional and independently upgradeable. An unreadable
+            // or unregistered Theme version only blocks Theme tasks; the core
+            // components must keep updating.
+            if ($instance->component === 'dk_theme') {
+                $theme = $components->get('dk_theme');
+                if ($theme) {
+                    if (!ReleaseCatalog::channel($theme->version)) return '请先登记 Theme 的准确版本';
+                    if (($theme->capabilities['panel_contract'] ?? null) < ReleaseCatalog::PANEL_CONTRACT_MIN) return '当前组件组合的兼容性未确认';
+                }
             }
             $admin = $components->get('xboard-admin');
-            if ($admin && $executor->updater_version !== $admin->version) {
+            // Updater 与 Admin 同属一个发布单元。版本漂移时仅允许把
+            // Admin 升到当前 Updater 版本（收敧行）；其余更新暂停，
+            // 避免把修复路径本身也锁死。
+            if ($admin && $executor->updater_version !== $admin->version
+                && !($instance->component === 'xboard-admin' && ($manifest['version'] ?? '') === $executor->updater_version)) {
                 return '当前 Admin 与 Updater 版本不一致，已暂停更新';
             }
             if ($instance->component === 'xboard' && !($instance->capabilities['database_recovery'] ?? false)) {
@@ -335,7 +342,7 @@ class UpdateManager
                         'reason' => $item['reason'] ?? null, 'capabilities' => $item['capabilities'] ?? []]);
             }
             UpdateInstance::where('executor_id', $executor->id)->whereNotIn('instance_id', $ids)
-                ->update(['ready' => false, 'reason' => '更新器已不再管理此实例']);
+                ->update(['ready' => false, 'reason' => '更新器已不再管理此实例', 'version' => null]);
         });
     }
     public function claim(UpdateExecutor $executor): ?array

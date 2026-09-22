@@ -26,7 +26,11 @@ class UpdateExecutor extends Model
 
     public function protocolReady(): bool
     {
-        return (int) $this->protocol === 2 && (int) $this->state_schema === 1
+        // Floors, not exact matches: executors reporting a newer protocol or
+        // state schema stay accepted so a protocol bump can roll out through
+        // the updater itself instead of a mandatory out-of-band upgrade.
+        return (int) $this->protocol >= ReleaseCatalog::UPDATE_PROTOCOL_MIN
+            && (int) $this->state_schema >= ReleaseCatalog::STATE_SCHEMA_MIN
             && ReleaseCatalog::channel($this->updater_version) !== null;
     }
 }

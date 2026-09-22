@@ -2,7 +2,6 @@
 
 <div align="center">
 
-[![Telegram](https://img.shields.io/badge/Telegram-Channel-blue)](https://t.me/XboardOfficial)
 ![PHP](https://img.shields.io/badge/PHP-8.2+-green.svg)
 ![MySQL](https://img.shields.io/badge/MySQL-5.7+-blue.svg)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -11,7 +10,7 @@
 
 ## 📖 Introduction
 
-Xboard is a modern panel system built on Laravel 11, focusing on providing a clean and efficient user experience.
+Xboard is a modern panel system built on Laravel 12, focusing on providing a clean and efficient user experience.
 
 ## ✨ Features
 
@@ -24,7 +23,7 @@ Xboard is a modern panel system built on Laravel 11, focusing on providing a cle
 ## 🚀 Quick Start
 
 ~~~bash
-git clone -b dev --depth 1 https://github.com/VoidInTheShell/Xboard
+git clone --depth 1 https://github.com/VoidInTheShell/Xboard
 cd Xboard
 cp compose.sample.yaml compose.yaml
 cp .env.example .env
@@ -84,7 +83,7 @@ modify or include DK_Theme.
 
 ## 🛠️ Tech Stack
 
-- Backend: Laravel 11 + Octane
+- Backend: Laravel 12 + Octane
 - Admin Panel: React + Shadcn UI + TailwindCSS
 - User Frontend: Vue3 + TypeScript + NaiveUI
 - Deployment: Docker + Docker Compose
@@ -98,21 +97,6 @@ modify or include DK_Theme.
 ## ⚠️ Disclaimer
 
 This project is for learning and communication purposes only. Users are responsible for any consequences of using this project.
-
-## ❤️ Support The Project
-
-If this project has helped you, donations are appreciated. They help support ongoing maintenance and would make me very happy.
-
-TRC20: `TLypStEWsVrj6Wz9mCxbXffqgt5yz3Y4XB`
-
-## 🌟 Maintenance Notice
-
-This project is currently under light maintenance. We will:
-- Fix critical bugs and security issues
-- Review and merge important pull requests
-- Provide necessary updates for compatibility
-
-However, new feature development may be limited.
 
 ## 🔔 Important Notes
 

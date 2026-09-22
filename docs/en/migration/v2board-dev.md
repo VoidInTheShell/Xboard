@@ -21,8 +21,6 @@ This guide explains how to migrate from V2board Dev version (2023/10/27) to Xboa
 
 ⚠️ Please complete the basic Xboard installation first (SQLite not supported):
 - [Docker Compose Deployment](../installation/docker-compose.md)
-- [aaPanel + Docker Deployment](../installation/aapanel-docker.md)
-- [aaPanel Deployment](../installation/aapanel.md)
 
 ### 3. Migration Steps
 

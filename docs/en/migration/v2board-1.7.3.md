@@ -23,8 +23,6 @@ This guide explains how to migrate from V2board version 1.7.3 to Xboard.
 
 ⚠️ Please complete the basic Xboard installation first (SQLite not supported):
 - [Docker Compose Deployment](../installation/docker-compose.md)
-- [aaPanel + Docker Deployment](../installation/aapanel-docker.md)
-- [aaPanel Deployment](../installation/aapanel.md)
 
 ### 3. Migration Steps
 

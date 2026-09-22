@@ -75,10 +75,7 @@ modify or include DK_Theme.
 - [Plugin Development Guide](./docs/en/development/plugin-development-guide.md) - Complete guide for developing XBoard plugins
 
 ### Deployment Guides
-- [Deploy with 1Panel](./docs/en/installation/1panel.md)
 - [Deploy with Docker Compose](./docs/en/installation/docker-compose.md)
-- [Deploy with aaPanel](./docs/en/installation/aapanel.md)
-- [Deploy with aaPanel + Docker](./docs/en/installation/aapanel-docker.md) (Recommended)
 
 ### Migration Guides
 - [Migrate from v2board dev](./docs/en/migration/v2board-dev.md)
@@ -123,8 +120,6 @@ However, new feature development may be limited.
 ```bash
 docker compose restart
 ```
-
-2. For aaPanel installations, restart the Octane daemon process
 
 ## Usage observability
 
@@ -172,7 +167,3 @@ automatic proof of subscription/key leakage or grounds for an automatic ban.
 ## 🤝 Contributing
 
 Issues and Pull Requests are welcome to help improve the project.
-
-## 📈 Star History
-
-[![Stargazers over time](https://starchart.cc/cedar2025/Xboard.svg)](https://starchart.cc/cedar2025/Xboard)

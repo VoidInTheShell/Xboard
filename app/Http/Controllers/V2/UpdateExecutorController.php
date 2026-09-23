@@ -5,13 +5,17 @@ use App\Exceptions\ApiException;
 use App\Http\Controllers\Controller;
 use App\Models\UpdateExecutor;
 use App\Models\ServerMachine;
+use App\Services\Certificates\CertificateService;
 use App\Services\Updates\UpdateManager;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class UpdateExecutorController extends Controller
 {
-    public function __construct(private readonly UpdateManager $updates) {}
+    public function __construct(
+        private readonly UpdateManager $updates,
+        private readonly CertificateService $certificates,
+    ) {}
     private function executor(Request $request): UpdateExecutor
     {
         $secret = $request->bearerToken();
@@ -54,5 +58,38 @@ class UpdateExecutorController extends Controller
             'result.version' => 'nullable|string|max:100',
             'result.updater_version' => 'nullable|string|max:100']);
         return $this->success($this->updates->report($executor, $data));
+    }
+
+    /**
+     * Desired state of the panel's own entry certificates. Only a panel
+     * executor may pull it; the updater renders the entry Caddyfile from this
+     * list and reconciles certificates it can manage.
+     */
+    public function panelCertificates(Request $request)
+    {
+        $executor = $this->executor($request);
+        if ($executor->kind !== 'panel') {
+            throw new ApiException('仅面板更新器可以访问面板证书。', 403);
+        }
+        return $this->success(['certificates' => $this->certificates->panelCertificatesForExecutor()]);
+    }
+
+    public function panelCertificateReport(Request $request)
+    {
+        $executor = $this->executor($request);
+        if ($executor->kind !== 'panel') {
+            throw new ApiException('仅面板更新器可以上报面板证书。', 403);
+        }
+        $data = $request->validate([
+            'certificates' => 'required|array|max:50',
+            'certificates.*.id' => 'required|uuid',
+            'certificates.*.status' => ['required', Rule::in(['valid', 'pending', 'issuing', 'error'])],
+            'certificates.*.applied_revision' => 'required|integer|min:1',
+            'certificates.*.not_before_at' => 'nullable|date',
+            'certificates.*.expires_at' => 'nullable|date',
+            'certificates.*.fingerprint' => 'nullable|string|max:128',
+            'certificates.*.last_error' => 'nullable|string|max:1000',
+        ]);
+        return $this->success($this->certificates->applyPanelCertificateReport($data['certificates']));
     }
 }

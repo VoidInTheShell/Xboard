@@ -9,6 +9,10 @@ class UpdateRoute
     {
         $router->group(['prefix' => 'update-executor', 'middleware' => 'throttle:120,1'], function ($route) {
             foreach (['heartbeat', 'claim', 'report'] as $action) $route->post($action, [UpdateExecutorController::class, $action]);
+            // Desired state and status report for the panel's own entry
+            // certificates; only panel executors may use them.
+            $route->get('panel-certificates', [UpdateExecutorController::class, 'panelCertificates']);
+            $route->post('panel-certificate-report', [UpdateExecutorController::class, 'panelCertificateReport']);
         });
     }
 }

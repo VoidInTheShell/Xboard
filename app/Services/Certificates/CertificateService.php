@@ -30,6 +30,15 @@ class CertificateService
             ->get();
     }
 
+    public function listPanel(): Collection
+    {
+        return ServerCertificate::query()
+            ->where('scope', ServerCertificate::SCOPE_PANEL)
+            ->with(['bindings.server.machine'])
+            ->orderBy('name')
+            ->get();
+    }
+
     public function findForMachine(string $id, int $machineId): ServerCertificate
     {
         $certificate = ServerCertificate::query()
@@ -43,9 +52,28 @@ class CertificateService
         return $certificate;
     }
 
+    public function findPanel(string $id): ServerCertificate
+    {
+        $certificate = ServerCertificate::query()
+            ->whereKey($id)
+            ->where('scope', ServerCertificate::SCOPE_PANEL)
+            ->with(['bindings.server.machine'])
+            ->first();
+        if (!$certificate) {
+            throw new ApiException('证书资源不存在或不属于面板作用域。', 404);
+        }
+        return $certificate;
+    }
+
     public function validateDraft(array $input, ?ServerCertificate $existing = null): array
     {
-        return $this->normalize($input, $existing, false);
+        // An update may omit the scope; the existing resource then decides
+        // which source types remain selectable.
+        $scope = strtolower(trim((string) ($input['scope'] ?? $existing?->scope ?? ServerCertificate::SCOPE_MACHINE)));
+        if (!in_array($scope, ServerCertificate::SCOPES, true)) {
+            throw new ApiException('无效的证书作用域。', 422);
+        }
+        return $this->normalize($input, $existing, false, $scope);
     }
 
     public function save(array $input): ServerCertificate
@@ -68,29 +96,29 @@ class CertificateService
             if ($certificateId && !$existing) {
                 throw new ApiException('证书资源不存在或不属于当前服务器。', 404);
             }
-            $normalized = $this->normalize($input, $existing, true);
-            if ($existing) {
-                $certificate = $existing;
-            } else {
-                $certificate = new ServerCertificate();
-                $certificate->id = (string) Str::uuid();
-                $certificate->machine_id = $machineId;
+            $normalized = $this->normalize($input, $existing, true, ServerCertificate::SCOPE_MACHINE);
+            $certificate = $this->persistNormalized($existing, $normalized, ServerCertificate::SCOPE_MACHINE, $machineId);
+            return $certificate->fresh(['bindings.server.machine']);
+        });
+    }
+
+    public function savePanel(array $input): ServerCertificate
+    {
+        $certificateId = !empty($input['id']) ? (string) $input['id'] : null;
+
+        return DB::transaction(function () use ($certificateId, $input): ServerCertificate {
+            $existing = $certificateId
+                ? ServerCertificate::query()
+                    ->whereKey($certificateId)
+                    ->where('scope', ServerCertificate::SCOPE_PANEL)
+                    ->lockForUpdate()
+                    ->first()
+                : null;
+            if ($certificateId && !$existing) {
+                throw new ApiException('证书资源不存在或不属于面板作用域。', 404);
             }
-
-            $certificate->fill(Arr::only($normalized, [
-                'name', 'source_type', 'domains', 'auto_renew', 'email',
-                'dns_provider', 'certificate_path', 'private_key_path',
-                'status', 'not_before_at', 'expires_at', 'fingerprint',
-                'last_renewed_at', 'next_renewal_at', 'last_error', 'revision',
-            ]));
-
-            foreach (['dns_credentials', 'certificate_content', 'private_key_content'] as $secret) {
-                if (array_key_exists($secret, $normalized)) {
-                    $certificate->{$secret} = $normalized[$secret];
-                }
-            }
-
-            $certificate->save();
+            $normalized = $this->normalize($input, $existing, true, ServerCertificate::SCOPE_PANEL);
+            $certificate = $this->persistNormalized($existing, $normalized, ServerCertificate::SCOPE_PANEL, null);
             return $certificate->fresh(['bindings.server.machine']);
         });
     }
@@ -121,6 +149,36 @@ class CertificateService
         });
     }
 
+    /**
+     * Panel-scope re-issue. The updater watches the revision, drops the
+     * entry's cached certificate material and lets Caddy re-run ACME.
+     */
+    public function renewPanel(string $id): ServerCertificate
+    {
+        return DB::transaction(function () use ($id): ServerCertificate {
+            $certificate = ServerCertificate::query()
+                ->whereKey($id)
+                ->where('scope', ServerCertificate::SCOPE_PANEL)
+                ->lockForUpdate()
+                ->first();
+            if (!$certificate) {
+                throw new ApiException('证书资源不存在或不属于面板作用域。', 404);
+            }
+            if ($certificate->source_type !== ServerCertificate::SOURCE_ACME_HTTP) {
+                throw new ApiException('路径或 PEM 内容证书不能由面板直接续签，请更新证书资源后再应用。', 422);
+            }
+
+            $certificate->forceFill([
+                'status' => 'issuing',
+                'last_error' => null,
+                'next_renewal_at' => null,
+                'revision' => (int) $certificate->revision + 1,
+            ])->save();
+
+            return $certificate->fresh(['bindings.server.machine']);
+        });
+    }
+
     public function drop(string $id, int $machineId): void
     {
         $certificate = $this->findForMachine($id, $machineId);
@@ -128,6 +186,102 @@ class CertificateService
             throw new ApiException('证书仍被节点或发布端点引用，请先解除所有引用。', 409);
         }
         $certificate->delete();
+    }
+
+    public function dropPanel(string $id): void
+    {
+        $certificate = $this->findPanel($id);
+        if ($certificate->bindings()->exists()) {
+            throw new ApiException('证书仍被节点或发布端点引用，请先解除所有引用。', 409);
+        }
+        $certificate->delete();
+    }
+
+    /**
+     * Desired state projection for the panel executor. The updater renders
+     * the entry Caddyfile from this list and falls back to its configured
+     * seed domains while it is empty.
+     */
+    public function panelCertificatesForExecutor(): array
+    {
+        return ServerCertificate::query()
+            ->where('scope', ServerCertificate::SCOPE_PANEL)
+            ->orderBy('name')
+            ->get()
+            ->map(static function (ServerCertificate $certificate): array {
+                $row = [
+                    'id' => (string) $certificate->id,
+                    'domains' => array_values($certificate->domains ?? []),
+                    'source_type' => $certificate->source_type,
+                    'auto_renew' => (bool) $certificate->auto_renew,
+                    'email' => $certificate->email,
+                    'revision' => (int) $certificate->revision,
+                    'status' => (string) ($certificate->status ?: 'pending'),
+                ];
+                if ($certificate->source_type === ServerCertificate::SOURCE_PATH) {
+                    $row['certificate_path'] = $certificate->certificate_path;
+                    $row['private_key_path'] = $certificate->private_key_path;
+                }
+                if ($certificate->source_type === ServerCertificate::SOURCE_CONTENT) {
+                    // Panel-scope content sources are materialised as PEM files
+                    // by the panel updater inside the entry gateway container.
+                    $row['certificate_content'] = $certificate->certificate_content;
+                    $row['private_key_content'] = $certificate->private_key_content;
+                }
+                return $row;
+            })
+            ->all();
+    }
+
+    /**
+     * Ingest the updater's panel-certificate status report. Machine-scope
+     * resources are never touched; reports older than the stored revision are
+     * stale and ignored so a late report cannot mark a freshly edited
+     * resource as valid before the updater reconciles the new revision.
+     */
+    public function applyPanelCertificateReport(array $reports): array
+    {
+        $applied = [];
+        $stale = [];
+        $unknown = [];
+
+        foreach ($reports as $report) {
+            $certificate = ServerCertificate::query()
+                ->whereKey($report['id'])
+                ->where('scope', ServerCertificate::SCOPE_PANEL)
+                ->first();
+            if (!$certificate) {
+                $unknown[] = (string) $report['id'];
+                continue;
+            }
+            if ((int) $report['applied_revision'] < (int) $certificate->revision) {
+                $stale[] = (string) $certificate->id;
+                continue;
+            }
+
+            $update = [
+                'status' => (string) $report['status'],
+                'last_error' => $report['last_error'] ?? null,
+            ];
+            if ($report['status'] === 'valid') {
+                $update['not_before_at'] = $report['not_before_at'] ?? null;
+                $update['expires_at'] = $report['expires_at'] ?? null;
+                if (!empty($report['fingerprint'])) {
+                    $update['fingerprint'] = (string) $report['fingerprint'];
+                    if ($certificate->fingerprint !== $report['fingerprint']) {
+                        $update['last_renewed_at'] = now();
+                    }
+                }
+            }
+            $certificate->forceFill($update)->save();
+            $applied[] = (string) $certificate->id;
+        }
+
+        return [
+            'applied' => $applied,
+            'stale' => $stale,
+            'unknown' => $unknown,
+        ];
     }
 
     /**
@@ -276,7 +430,8 @@ class CertificateService
         $certificate->loadMissing(['bindings.server.machine']);
         $data = [
             'id' => (string) $certificate->id,
-            'machine_id' => (int) $certificate->machine_id,
+            'scope' => $certificate->scope ?: ServerCertificate::SCOPE_MACHINE,
+            'machine_id' => $certificate->machine_id !== null ? (int) $certificate->machine_id : null,
             'name' => $certificate->name,
             'source_type' => $certificate->source_type,
             'domains' => array_values($certificate->domains ?? []),
@@ -353,11 +508,51 @@ class CertificateService
             ->first();
     }
 
-    private function normalize(array $input, ?ServerCertificate $existing, bool $forSave): array
+    private function persistNormalized(?ServerCertificate $existing, array $normalized, string $scope, ?int $machineId): ServerCertificate
+    {
+        if ($existing) {
+            $certificate = $existing;
+        } else {
+            $certificate = new ServerCertificate();
+            $certificate->id = (string) Str::uuid();
+            $certificate->scope = $scope;
+            $certificate->machine_id = $machineId;
+        }
+
+        $certificate->fill(Arr::only($normalized, [
+            'name', 'source_type', 'domains', 'auto_renew', 'email',
+            'dns_provider', 'certificate_path', 'private_key_path',
+            'status', 'not_before_at', 'expires_at', 'fingerprint',
+            'last_renewed_at', 'next_renewal_at', 'last_error', 'revision',
+        ]));
+
+        foreach (['dns_credentials', 'certificate_content', 'private_key_content'] as $secret) {
+            if (array_key_exists($secret, $normalized)) {
+                $certificate->{$secret} = $normalized[$secret];
+            }
+        }
+
+        $certificate->save();
+        return $certificate;
+    }
+
+    private function scopeOf(array $input): string
+    {
+        $scope = strtolower(trim((string) ($input['scope'] ?? ServerCertificate::SCOPE_MACHINE)));
+        if (!in_array($scope, ServerCertificate::SCOPES, true)) {
+            throw new ApiException('无效的证书作用域。', 422);
+        }
+        return $scope;
+    }
+
+    private function normalize(array $input, ?ServerCertificate $existing, bool $forSave, string $scope = ServerCertificate::SCOPE_MACHINE): array
     {
         $source = trim((string) ($input['source_type'] ?? $existing?->source_type ?? ''));
         if (!in_array($source, ServerCertificate::SOURCES, true)) {
             throw new ApiException('证书来源类型不受支持。', 422);
+        }
+        if ($scope === ServerCertificate::SCOPE_PANEL && !in_array($source, ServerCertificate::PANEL_SOURCES, true)) {
+            throw new ApiException('面板证书仅支持 ACME HTTP、路径或 PEM 内容来源。', 422);
         }
 
         $domains = $this->domains($input['domains'] ?? $existing?->domains ?? []);

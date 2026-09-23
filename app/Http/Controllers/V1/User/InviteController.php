@@ -17,6 +17,7 @@ class InviteController extends Controller
 {
     public function save(Request $request)
     {
+        $this->assertCommissionAccess($request->user());
         if (InviteCode::where('user_id', $request->user()->id)->where('status', 0)->count() >= admin_setting('invite_gen_limit', 5)) {
             return $this->fail([400,__('The maximum number of creations has been reached')]);
         }
@@ -28,6 +29,7 @@ class InviteController extends Controller
 
     public function details(Request $request)
     {
+        $this->assertCommissionAccess($request->user());
         $current = $request->input('current') ? $request->input('current') : 1;
         $pageSize = $request->input('page_size') >= 10 ? $request->input('page_size') : 10;
         $builder = CommissionLog::where('invite_user_id', $request->user()->id)
@@ -44,6 +46,7 @@ class InviteController extends Controller
 
     public function fetch(Request $request)
     {
+        $this->assertCommissionAccess($request->user());
         $commission_rate = admin_setting('invite_commission', 10);
         $user = User::find($request->user()->id)
                 ->load(['codes' => fn($query) => $query->where('status', 0)]);
@@ -75,5 +78,12 @@ class InviteController extends Controller
             'stat' => $stat
         ];
         return $this->success($data);
+    }
+
+    private function assertCommissionAccess(?User $user): void
+    {
+        if ((bool) admin_setting('self_use_mode', 0) && !$user?->is_admin && !$user?->is_staff) {
+            throw new ApiException('自用模式下普通用户不可访问邀请与佣金功能。', 403);
+        }
     }
 }

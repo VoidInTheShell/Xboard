@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\V1\User;
 
 use App\Http\Controllers\Controller;
+use App\Exceptions\ApiException;
 use App\Http\Requests\User\UserChangePassword;
 use App\Http\Requests\User\UserTransfer;
 use App\Http\Requests\User\UserUpdate;
@@ -193,6 +194,7 @@ class UserController extends Controller
 
     public function transfer(UserTransfer $request)
     {
+        $this->assertCommissionAccess($request->user());
         $amount = $request->input('transfer_amount');
         try {
             DB::transaction(function () use ($request, $amount) {
@@ -221,5 +223,12 @@ class UserController extends Controller
 
         $url = $this->loginService->generateQuickLoginUrl($user, $request->input('redirect'));
         return $this->success($url);
+    }
+
+    private function assertCommissionAccess(?User $user): void
+    {
+        if ((bool) admin_setting('self_use_mode', 0) && !$user?->is_admin && !$user?->is_staff) {
+            throw new ApiException('自用模式下普通用户不可访问邀请与佣金功能。', 403);
+        }
     }
 }

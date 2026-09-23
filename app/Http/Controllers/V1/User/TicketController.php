@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\V1\User;
 
 use App\Http\Controllers\Controller;
+use App\Exceptions\ApiException;
 use App\Http\Requests\User\TicketSave;
 use App\Http\Requests\User\TicketWithdraw;
 use App\Http\Resources\TicketResource;
@@ -115,6 +116,7 @@ class TicketController extends Controller
 
     public function withdraw(TicketWithdraw $request)
     {
+        $this->assertCommissionAccess($request->user());
         if ((int) admin_setting('withdraw_close_enable', 0)) {
             return $this->fail([400, 'Unsupported withdraw']);
         }
@@ -150,5 +152,12 @@ class TicketController extends Controller
         }
         HookManager::call('ticket.create.after', $ticket);
         return $this->success(true);
+    }
+
+    private function assertCommissionAccess(?User $user): void
+    {
+        if ((bool) admin_setting('self_use_mode', 0) && !$user?->is_admin && !$user?->is_staff) {
+            throw new ApiException('自用模式下普通用户不可访问邀请与佣金功能。', 403);
+        }
     }
 }

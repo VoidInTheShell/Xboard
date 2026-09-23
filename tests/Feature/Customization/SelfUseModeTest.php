@@ -4,8 +4,10 @@ namespace Tests\Feature\Customization;
 
 use App\Http\Controllers\V1\User\CommController as UserCommController;
 use App\Http\Controllers\V1\Guest\PlanController as GuestPlanController;
+use App\Http\Controllers\V1\User\InviteController;
 use App\Http\Controllers\V1\User\OrderController as UserOrderController;
 use App\Http\Controllers\V1\User\PlanController as UserPlanController;
+use App\Http\Controllers\V1\User\TicketController;
 use App\Http\Controllers\V1\User\UserController;
 use App\Http\Controllers\V2\Admin\ConfigController;
 use App\Http\Controllers\V2\Admin\Server\MachineController;
@@ -100,6 +102,30 @@ class SelfUseModeTest extends TestCase
             $this->getJson($this->routePath(UserOrderController::class . '@fetch'))
                 ->assertOk();
         }
+    }
+
+    public function test_self_use_mode_blocks_invite_and_commission_apis_for_regular_users(): void
+    {
+        admin_setting(['self_use_mode' => true]);
+
+        Sanctum::actingAs($this->makeUser());
+        $this->getJson($this->routePath(InviteController::class . '@fetch'))
+            ->assertForbidden();
+        $this->getJson($this->routePath(InviteController::class . '@save'))
+            ->assertForbidden();
+        $this->getJson($this->routePath(InviteController::class . '@details'))
+            ->assertForbidden();
+        $this->postJson($this->routePath(UserController::class . '@transfer'), [
+            'transfer_amount' => 100,
+        ])->assertForbidden();
+        $this->postJson($this->routePath(TicketController::class . '@withdraw'), [
+            'withdraw_method' => 'alipay',
+            'withdraw_account' => 'test@example.com',
+        ])->assertForbidden();
+
+        Sanctum::actingAs($this->makeUser(['is_staff' => true]));
+        $this->getJson($this->routePath(InviteController::class . '@fetch'))
+            ->assertOk();
     }
 
     public function test_machine_install_command_uses_the_forked_node_installer(): void

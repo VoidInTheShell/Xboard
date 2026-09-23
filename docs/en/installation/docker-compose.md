@@ -89,7 +89,7 @@ XBOARD_UPDATER_VERSION=vA.B.C
 XBOARD_PANEL_URL=https://panel.example.com
 ~~~
 
-Create the admin route token, start the stack, and install:
+Create the admin route token, then install and start:
 
 ~~~bash
 install -d -m 0755 secrets
@@ -98,28 +98,30 @@ umask 027 && head -c 32 /dev/urandom | base64 | tr -d '=+/' \
 chown root:1000 secrets/admin_route_token
 
 ./deploy/compose/validate.sh compose.yaml
-docker compose --env-file .env -f compose.yaml up -d --wait
 ~~~
 
-The installer reads its inputs from environment variables (`ENABLE_SQLITE`,
-`ENABLE_REDIS`, `ADMIN_ACCOUNT`, `ADMIN_PASSWORD` or `ADMIN_PASSWORD_FILE`,
-optional `ADMIN_SECURE_PATH`, `APP_URL`) and turns fully non-interactive when
-they are set. Pass the password via a file to keep it out of process
-environments:
+The suite installs before the managed start: the backend only passes its
+health check once the installer wrote APP_KEY and the runtime drivers into
+the mounted `.env`. The installer reads its inputs from environment variables
+(`ENABLE_SQLITE`, `ENABLE_REDIS`, `ADMIN_ACCOUNT`, `ADMIN_PASSWORD` or
+`ADMIN_PASSWORD_FILE`, optional `ADMIN_SECURE_PATH`, `APP_URL`) and turns
+fully non-interactive when they are set. Pass the password via a mounted file
+to keep it out of process environments:
 
 ~~~bash
-printf '%s' 'your-admin-password' > /tmp/admin_password
-chmod 600 /tmp/admin_password
-docker cp /tmp/admin_password xboard-app:/tmp/admin_password
-docker compose --env-file .env -f compose.yaml exec -T \
+printf '%s' 'your-admin-password' > secrets/install_admin_password
+chmod 600 secrets/install_admin_password
+docker compose --env-file .env -f compose.yaml run --rm \
+  --volume "$PWD/secrets/install_admin_password:/tmp/install_admin_password:ro" \
   -e ENABLE_SQLITE=1 -e ENABLE_REDIS=1 \
   -e ADMIN_ACCOUNT=admin@example.com \
-  -e ADMIN_PASSWORD_FILE=/tmp/admin_password \
+  -e ADMIN_PASSWORD_FILE=/tmp/install_admin_password \
   -e ADMIN_SECURE_PATH=myadminpath \
   -e APP_URL=https://panel.example.com \
   xboard php artisan xboard:install
-docker exec xboard-app rm -f /tmp/admin_password
-rm -f /tmp/admin_password
+rm -f secrets/install_admin_password
+
+docker compose --env-file .env -f compose.yaml up -d --wait
 ~~~
 
 Startup order is part of the contract:

@@ -214,23 +214,25 @@ chmod 600 .env
 # ------------------------------------------------------------------- start --
 COMPOSE_FILES=(-f compose.yaml)
 [ "$ENTRY" -eq 1 ] && COMPOSE_FILES+=(-f compose.entry.yaml)
-log "starting the suite (first pull may take a few minutes)..."
-docker compose "${COMPOSE_FILES[@]}" up -d --wait >/dev/null \
-  || die "compose failed; inspect with: docker compose ${COMPOSE_FILES[*]} ps && docker compose ${COMPOSE_FILES[*]} logs"
 
-# ----------------------------------------------------------------- install --
-log "running the non-interactive panel install..."
-docker cp secrets/install_admin_password "xboard-app:/tmp/install_admin_password" >/dev/null
-docker compose -f compose.yaml exec -T \
+# The suite installs before the managed start: the backend container only
+# passes its health check once the installer wrote APP_KEY and the runtime
+# drivers into the mounted .env.
+log "running the non-interactive panel install (first pull may take a few minutes)..."
+docker compose "${COMPOSE_FILES[@]}" run --rm \
+  --volume "${DEPLOY_DIR}/secrets/install_admin_password:/tmp/install_admin_password:ro" \
   -e ENABLE_SQLITE=1 -e ENABLE_REDIS=1 \
   -e ADMIN_ACCOUNT="$ADMIN_EMAIL" \
   -e ADMIN_PASSWORD_FILE=/tmp/install_admin_password \
   -e ADMIN_SECURE_PATH="$ADMIN_PATH" \
   -e APP_URL="https://${DOMAIN}" \
-  xboard php artisan xboard:install >/dev/null \
-  || die "panel install failed; see: docker compose -f compose.yaml logs xboard"
-docker exec xboard-app rm -f /tmp/install_admin_password
+  xboard php artisan xboard:install \
+  || die "panel install failed; see: docker compose ${COMPOSE_FILES[*]} logs xboard"
 rm -f secrets/install_admin_password
+
+log "starting the suite..."
+docker compose "${COMPOSE_FILES[@]}" up -d --wait >/dev/null \
+  || die "compose failed; inspect with: docker compose ${COMPOSE_FILES[*]} ps && docker compose ${COMPOSE_FILES[*]} logs"
 
 # ---------------------------------------------------- admin API bootstrapping --
 api() {

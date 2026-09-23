@@ -59,12 +59,12 @@ umask 027 && head -c 32 /dev/urandom | base64 | tr -d '=+/' > secrets/admin_rout
 chown root:1000 secrets/admin_route_token
 
 ./deploy/compose/validate.sh compose.yaml
-docker compose --env-file .env -f compose.yaml up -d --wait
-docker compose --env-file .env -f compose.yaml exec -T \
+docker compose --env-file .env -f compose.yaml run --rm \
     -e ENABLE_SQLITE=1 -e ENABLE_REDIS=1 \
     -e ADMIN_ACCOUNT=admin@example.com \
     -e ADMIN_PASSWORD=your-password \
     xboard php artisan xboard:install
+docker compose --env-file .env -f compose.yaml up -d --wait
 ~~~
 
 See [Deploy with Docker Compose](./docs/en/installation/docker-compose.md)

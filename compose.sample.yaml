@@ -1,12 +1,28 @@
 name: xboard
 
 # Default topology: Xboard keeps its existing embedded Web/Horizon/WebSocket/
-# Redis process layout, while Admin, Updater and the one-shot bootstrap run as
-# separate services. Set XBOARD_DEPLOY_DIR to the same absolute path on the
-# host and inside xboard-updater; the updater must be able to hand the exact
-# Compose file path to the host Docker daemon. The deployment directory and
-# its parent paths must be traversable by the user-namespaced updater (usually
-# mode 0751/0755); keep .env and secrets at 0600.
+# Redis process layout, while the user-facing Theme, the standalone Admin,
+# the private updater, and the one-shot bootstrap run as separate services.
+# Set XBOARD_DEPLOY_DIR to the same absolute path on the host and inside
+# xboard-updater; the updater must be able to hand the exact Compose file path
+# to the host Docker daemon. The deployment directory and its parent paths
+# must be traversable by the user-namespaced updater (usually mode 0751/0755);
+# keep .env and secrets at 0600.
+#
+# The theme container is the canonical panel entry: it serves the user
+# frontend, proxies the panel API to the backend, and routes the runtime
+# administrator path to xboard-admin (/<active-path>/original keeps the
+# built-in administrator view). Both the backend and the theme read the same
+# administrator route token; create it before the first start with:
+#
+#   install -d -m 0755 "${XBOARD_DEPLOY_DIR}/secrets"
+#   umask 027 && head -c 32 /dev/urandom | base64 | tr -d '=+/' \
+#     > "${XBOARD_DEPLOY_DIR}/secrets/admin_route_token"
+#   chown root:1000 "${XBOARD_DEPLOY_DIR}/secrets/admin_route_token"
+#
+# For a public 80/443 HTTPS entry, add compose.entry.sample.yaml (Caddy with
+# automatic ACME, managed by the panel updater) or join the theme service to
+# an existing reverse-proxy network with your own overlay.
 
 x-container-logging: &container-logging
   driver: json-file
@@ -21,6 +37,7 @@ x-xboard-volumes: &xboard-volumes
   - ${XBOARD_DEPLOY_DIR}/storage/app/public:/www/storage/app/public
   - ${XBOARD_DEPLOY_DIR}/storage/theme:/www/storage/theme
   - ${XBOARD_DEPLOY_DIR}/plugins:/www/plugins
+  - ${XBOARD_DEPLOY_DIR}/secrets/admin_route_token:/run/secrets/admin_route_token:ro
   - xboard-redis-data:/data
 
 services:
@@ -41,6 +58,7 @@ services:
       ENABLE_REDIS: "true"
       ENABLE_WS_SERVER: "true"
       ENABLE_CADDY: "true"
+      ADMIN_ROUTE_TOKEN_FILE: /run/secrets/admin_route_token
       docker: "true"
     networks:
       - xboard-internal
@@ -63,8 +81,6 @@ services:
     depends_on:
       xboard:
         condition: service_healthy
-    ports:
-      - "${XBOARD_ADMIN_PORT:-7003}:80"
     expose:
       - "80"
     read_only: true
@@ -74,6 +90,43 @@ services:
       - /tmp
     networks:
       - xboard-internal
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  xboard-theme:
+    image: ghcr.io/voidintheshell/dk_theme:${XBOARD_THEME_VERSION:?Set XBOARD_THEME_VERSION to the exact DK Theme release version}
+    container_name: xboard-theme
+    logging: *container-logging
+    restart: unless-stopped
+    init: true
+    depends_on:
+      xboard:
+        condition: service_healthy
+      xboard-admin:
+        condition: service_healthy
+    ports:
+      - "${XBOARD_THEME_PORT:-7002}:80"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    volumes:
+      - ${XBOARD_DEPLOY_DIR}/secrets/admin_route_token:/run/secrets/admin_route_token:ro
+    environment:
+      ADMIN_ROUTE_TOKEN_FILE: /run/secrets/admin_route_token
+    networks:
+      # Docker silently drops published ports for containers attached only to
+      # an internal network; the egress bridge is what makes XBOARD_THEME_PORT
+      # reachable from the host.
+      - xboard-internal
+      - xboard-egress
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -102,6 +155,9 @@ services:
       - updater-state:/var/lib/xboard-updater
     environment:
       XBOARD_PANEL_URL: ${XBOARD_PANEL_URL:?Set XBOARD_PANEL_URL to the HTTPS panel URL}
+      XBOARD_THEME_HEALTH_URL: ${XBOARD_THEME_HEALTH_URL:-http://xboard-theme/healthz}
+      XBOARD_ENTRY_ENABLED: ${XBOARD_ENTRY_ENABLED:-}
+      XBOARD_PANEL_DOMAIN: ${XBOARD_PANEL_DOMAIN:-}
       XBOARD_ADMIN_VERSION: ${XBOARD_ADMIN_VERSION}
       XBOARD_DEPLOY_DIR: ${XBOARD_DEPLOY_DIR}
       XBOARD_COMPOSE_FILE: ${XBOARD_COMPOSE_FILE:-${XBOARD_DEPLOY_DIR}/compose.yaml}

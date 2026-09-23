@@ -25,3 +25,9 @@ storage/laravels.conf
 storage/laravels.pid
 storage/laravels-timer-process.pid
 /frontend
+.agent-tmp
+.testenv
+.agent-docs
+tmp
+memory
+memory

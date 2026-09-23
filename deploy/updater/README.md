@@ -6,7 +6,16 @@ Admin 的“版本更新”和 MCP 使用相同的持久化任务接口。用户
 
 ## 默认面板 Compose
 
-根目录 `compose.sample.yaml` 已将面板 Updater 改为独立容器。首次启动由 `updater-bootstrap` 在后端健康后执行 `update:executor panel`，把一次性输出的凭据写入私有 volume，并生成固定的后端维护 hook；不要再把 panel token 手工复制到仓库或普通日志。`xboard-updater` 只管理 Compose 中登记的后端服务，不发布公网端口，并使用同一宿主机绝对部署路径挂载以执行恢复。
+根目录 `compose.sample.yaml` 已将面板 Updater 改为独立容器。首次启动由 `updater-bootstrap` 在后端健康后执行 `update:executor panel`，把一次性输出的凭据写入私有 volume，并生成固定的后端维护 hook；不要再把 panel token 手工复制到仓库或普通日志。`xboard-updater` 只管理 Compose 中登记的后端、Theme 和 Admin 目标，不发布公网端口，并使用同一宿主机绝对部署路径挂载以执行恢复。
+
+开启 `XBOARD_ENTRY_ENABLED=1` 并叠加 `compose.entry.sample.yaml` 时，bootstrap 同时把入口登记写入更新器配置（`panel_entry`：Caddy 容器名、Caddyfile 路径、种子域名、Theme 上游、容器内路径与共享证书卷），更新器随后作为面板证书 reconciler 运行：
+
+- 每分钟拉取 `GET /api/v2/update-executor/panel-certificates` 的期望证书清单；
+- 把面板作用域证书资源渲染为入口 Caddyfile（`acme_http` 交给 Caddy 自动签发，`path` 直接引用容器内路径，`content` 物化为共享 `entry-certs` 卷中的 PEM）；未被证书资源覆盖的种子域名自动纳入兜底站点，面板不会被自己锁死；
+- 变更时原子写入 Caddyfile 并 `docker exec xboard-entry caddy reload`，重载失败会回退文件；
+- 校验 Caddy 存储中的证书（有效期、指纹），通过 `POST /api/v2/update-executor/panel-certificate-report` 回报状态；证书资源 revision 提升且此前有效时，先清除对应域名的 ACME 缓存再重载，实现换域名重签。
+
+入口两个卷均为专用：`entry-caddy-data` 以只读挂入更新器用于校验，`entry-certs` 为更新器可写、Caddy 只读的共享物化卷。机器作用域证书与本流程无关。
 
 默认 Compose 的首次安装、版本变量、持久化边界和安全注意事项见 [Xboard Docker Compose 安装文档](../../docs/en/installation/docker-compose.md)。本文件后续章节仍适用于节点宿主机的 systemd/Docker/Compose 接入；节点的 updater 凭据与面板凭据相互独立。
 
@@ -85,4 +94,4 @@ Admin 管理路径下：
 
 MCP 自动目录中的操作为 `update.overview.get`、`update.releases.get`、`update.task.get`、`update.tasks.post`，属于 `system` 权限域。通过 `xboard_admin_read` 查询；创建必须调用 `xboard_admin_mutate`，携带最新 `expected_change_version` 和 `confirmation: "CONFIRM update.tasks.post"`。沿用管理员校验和操作审计，MCP 不直接操作宿主机。
 
-执行器接口独立为 `POST /api/v2/update-executor/{heartbeat,claim,report}`，只接受专用 Bearer 凭据，并限制为登记的面板或节点宿主机。服务端固定自有 Release 来源和镜像名，不接受任意镜像、URL 或命令。目标仅接受 `vX.Y.Z` 或 `vX.Y.Z-dev.RUN_ID.ATTEMPT`；无有效发布清单的版本不能安装。版本清单的兼容性按“下限”而非精确匹配校验：声明更高任务协议的版本仍可列出与安装，由该 Release 自带的新 Updater 执行交接，避免协议升级后面板无法自举；清单按发布不可变原则缓存一小时，发布列表缓存 5 分钟。手动降版仍需满足目标兼容性；后端应用版本降低不等于反向执行数据库迁移，不支持未经验证的跨 schema 降版。
+执行器接口独立为 `POST /api/v2/update-executor/{heartbeat,claim,report}`，面板证书 reconciler 另用 `GET /api/v2/update-executor/panel-certificates` 与 `POST /api/v2/update-executor/panel-certificate-report`（后者携带每张证书的 `applied_revision`，旧 revision 上报被忽略；两者均仅限 `panel` 执行器），只接受专用 Bearer 凭据，并限制为登记的面板或节点宿主机。服务端固定自有 Release 来源和镜像名，不接受任意镜像、URL 或命令。目标仅接受 `vX.Y.Z` 或 `vX.Y.Z-dev.RUN_ID.ATTEMPT`；无有效发布清单的版本不能安装。版本清单的兼容性按“下限”而非精确匹配校验：声明更高任务协议的版本仍可列出与安装，由该 Release 自带的新 Updater 执行交接，避免协议升级后面板无法自举；清单按发布不可变原则缓存一小时，发布列表缓存 5 分钟。手动降版仍需满足目标兼容性；后端应用版本降低不等于反向执行数据库迁移，不支持未经验证的跨 schema 降版。

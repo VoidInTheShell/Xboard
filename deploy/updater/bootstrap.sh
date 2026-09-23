@@ -17,7 +17,20 @@ umask 077
 # two images are published independently.
 : "${XBOARD_UPDATER_VERSION:=${XBOARD_ADMIN_VERSION}}"
 : "${XBOARD_ADMIN_HEALTH_URL:=http://xboard-admin/healthz}"
+: "${XBOARD_THEME_HEALTH_URL:=http://xboard-theme/healthz}"
 : "${XBOARD_COMPOSE_EXTRA_FILE:=}"
+# Compose service keys for the registered targets. The defaults match
+# compose.sample.yaml; deployments built from a different Compose file (for
+# example the staging/production layouts whose theme service is named
+# "theme") override these through the same environment file.
+: "${XBOARD_BACKEND_COMPOSE_SERVICE:=xboard}"
+: "${XBOARD_ADMIN_COMPOSE_SERVICE:=xboard-admin}"
+: "${XBOARD_THEME_COMPOSE_SERVICE:=xboard-theme}"
+# Optional Caddy entry registration (compose.entry.sample.yaml). When enabled,
+# the updater renders ${XBOARD_DEPLOY_DIR}/entry/Caddyfile from the
+# panel-scope certificate resources and falls back to these seed domains.
+: "${XBOARD_ENTRY_ENABLED:=}"
+: "${XBOARD_PANEL_DOMAIN:=}"
 
 config_dir=/etc/xboard-updater
 state_dir=/var/lib/xboard-updater
@@ -32,6 +45,7 @@ install -d -m 700 "$config_dir" "$state_dir" "$state_dir/backups"
 # Version values are used as Docker tags, so reject path separators and other
 # characters that could turn the configured image into an unintended reference.
 export XBOARD_PANEL_URL XBOARD_ADMIN_VERSION XBOARD_UPDATER_VERSION XBOARD_DEPLOY_DIR XBOARD_COMPOSE_EXTRA_FILE
+export XBOARD_THEME_HEALTH_URL XBOARD_THEME_COMPOSE_SERVICE XBOARD_ENTRY_ENABLED XBOARD_PANEL_DOMAIN
 php -r '
 $panelURL = getenv("XBOARD_PANEL_URL");
 $parts = is_string($panelURL) ? parse_url($panelURL) : false;
@@ -122,8 +136,10 @@ printf '%s\n' "$XBOARD_BACKEND_CONTAINER" > "$config_dir/backend-container"
 chmod 600 "$config_dir/backend-container"
 install -m 600 "$compose_env_source" "$config_dir/deploy.env"
 
-export XBOARD_COMPOSE_FILE XBOARD_ENV_FILE XBOARD_HEALTH_URL XBOARD_ADMIN_HEALTH_URL
+export XBOARD_COMPOSE_FILE XBOARD_ENV_FILE XBOARD_HEALTH_URL XBOARD_ADMIN_HEALTH_URL XBOARD_THEME_HEALTH_URL
 export XBOARD_COMPOSE_PROJECT XBOARD_BACKEND_CONTAINER
+export XBOARD_BACKEND_COMPOSE_SERVICE XBOARD_ADMIN_COMPOSE_SERVICE XBOARD_THEME_COMPOSE_SERVICE
+export XBOARD_ENTRY_ENABLED XBOARD_PANEL_DOMAIN
 export CONFIG_FILE="$config_file" TOKEN_FILE="$token_file" STATE_DIR="$state_dir"
 export HANDOFF_PATH="$state_dir/handoff.json" EXECUTOR_ID="$executor_id"
 php -r '
@@ -157,7 +173,7 @@ $targets = [
         "compose_env_file" => $composeEnvFile,
         "compose_extra_files" => $extraCompose,
         "compose_project" => getenv("XBOARD_COMPOSE_PROJECT"),
-        "compose_service" => "xboard",
+        "compose_service" => getenv("XBOARD_BACKEND_COMPOSE_SERVICE") ?: "xboard",
         "health_url" => getenv("XBOARD_HEALTH_URL"),
     ] + $hook,
     [
@@ -169,10 +185,59 @@ $targets = [
         "compose_env_file" => $composeEnvFile,
         "compose_extra_files" => $extraCompose,
         "compose_project" => getenv("XBOARD_COMPOSE_PROJECT"),
-        "compose_service" => "xboard-admin",
+        "compose_service" => getenv("XBOARD_ADMIN_COMPOSE_SERVICE") ?: "xboard-admin",
         "health_url" => getenv("XBOARD_ADMIN_HEALTH_URL"),
     ],
+    [
+        "id" => "theme",
+        "name" => "DK Theme",
+        "component" => "dk_theme",
+        "method" => "compose",
+        "compose_file" => getenv("XBOARD_COMPOSE_FILE"),
+        "compose_env_file" => $composeEnvFile,
+        "compose_extra_files" => $extraCompose,
+        "compose_project" => getenv("XBOARD_COMPOSE_PROJECT"),
+        "compose_service" => getenv("XBOARD_THEME_COMPOSE_SERVICE") ?: "xboard-theme",
+        "health_url" => getenv("XBOARD_THEME_HEALTH_URL"),
+    ],
 ];
+
+$themeHealthUrl = getenv("XBOARD_THEME_HEALTH_URL");
+if (!is_string($themeHealthUrl) || filter_var($themeHealthUrl, FILTER_VALIDATE_URL) === false) {
+    fwrite(STDERR, "XBOARD_THEME_HEALTH_URL is not a valid URL\n");
+    exit(1);
+}
+
+$entryEnabled = getenv("XBOARD_ENTRY_ENABLED") === "1";
+$seedDomains = [];
+$panelDomainEnv = getenv("XBOARD_PANEL_DOMAIN");
+if (is_string($panelDomainEnv) && trim($panelDomainEnv) !== "") {
+    foreach (explode(",", $panelDomainEnv) as $seedDomain) {
+        $seedDomain = strtolower(trim($seedDomain));
+        if (!preg_match(
+            "/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$/D",
+            $seedDomain
+        )) {
+            fwrite(STDERR, "XBOARD_PANEL_DOMAIN contains an invalid domain: " . $seedDomain . "\n");
+            exit(1);
+        }
+        $seedDomains[] = $seedDomain;
+    }
+    $seedDomains = array_values(array_unique($seedDomains));
+}
+if ($entryEnabled && $seedDomains === []) {
+    $panelUrl = getenv("XBOARD_PANEL_URL");
+    $parts = is_string($panelUrl) ? parse_url($panelUrl) : false;
+    $host = is_array($parts) ? strtolower((string) ($parts["host"] ?? "")) : "";
+    $loopbackHosts = ["127.0.0.1", "localhost", "::1", "[::1]"];
+    $isLoopback = in_array($host, $loopbackHosts, true);
+    $isIp = $host !== "" && filter_var(trim($host, "[]"), FILTER_VALIDATE_IP) !== false;
+    if ($host === "" || $isLoopback || $isIp) {
+        fwrite(STDERR, "XBOARD_ENTRY_ENABLED=1 requires XBOARD_PANEL_DOMAIN or a public HTTPS panel URL host\n");
+        exit(1);
+    }
+    $seedDomains[] = $host;
+}
 $config = [
     "panel_url" => getenv("XBOARD_PANEL_URL"),
     "executor_id" => $executorId,
@@ -186,6 +251,19 @@ $config = [
     "updater_image" => "ghcr.io/voidintheshell/xboard-admin-updater:" . getenv("XBOARD_UPDATER_VERSION"),
     "targets" => $targets,
 ];
+if ($entryEnabled) {
+    $config["panel_entry"] = [
+        "enabled" => true,
+        "caddy_container" => "xboard-entry",
+        "caddyfile_path" => getenv("XBOARD_DEPLOY_DIR") . "/entry/Caddyfile",
+        "caddy_config_path" => "/etc/caddy/Caddyfile",
+        "caddy_data_path" => "/entry-caddy-data",
+        "caddy_internal_data_path" => "/data",
+        "cert_material_dir" => "/entry-certs",
+        "seed_domains" => $seedDomains,
+        "theme_upstream" => "http://xboard-theme:80",
+    ];
+}
 $encoded = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 if (!is_string($encoded)) {
     exit(1);

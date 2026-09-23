@@ -1,0 +1,79 @@
+# Optional public HTTPS entry overlay for the default panel Compose template.
+#
+#   docker compose --env-file .env -f compose.yaml -f compose.entry.yaml up -d
+#
+# It adds a Caddy container that terminates TLS on 80/443 with automatic ACME
+# (HTTP-01 / TLS-ALPN) and proxies to the theme container, and lets the panel
+# updater read Caddy's certificate storage to report certificate status back
+# to the panel. Ports 80 and 443 must be reachable from the Internet for the
+# ACME challenges; point the panel domain's DNS record at this server first.
+#
+# The Caddyfile at ${XBOARD_DEPLOY_DIR}/entry/Caddyfile is managed by the
+# panel updater: it is rendered from the panel-scope certificate resources in
+# the Admin "证书管理" page, falling back to XBOARD_PANEL_DOMAIN (or the host
+# of XBOARD_PANEL_URL) while no certificate resource exists. Create the
+# placeholder before the first start; the install script and the deployment
+# documentation do this with:
+#
+#   install -d -m 0755 "${XBOARD_DEPLOY_DIR}/entry"
+#   printf '{\n\tadmin :2019\n}\n' > "${XBOARD_DEPLOY_DIR}/entry/Caddyfile"
+#
+# The placeholder only keeps Caddy's admin endpoint alive until the updater
+# renders the real configuration; an empty file is not a valid Caddyfile.
+#
+# Set XBOARD_ENTRY_ENABLED=1 in .env so updater-bootstrap registers the entry
+# target. Do not edit the Caddyfile by hand; the updater rewrites it.
+# Reverse-proxy deployments that keep an existing NPM/BunkerWeb entry do not
+# need this overlay at all.
+
+x-container-logging: &container-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  xboard-entry:
+    image: caddy:2-alpine
+    container_name: xboard-entry
+    logging: *container-logging
+    restart: unless-stopped
+    init: true
+    depends_on:
+      xboard:
+        condition: service_healthy
+      updater-bootstrap:
+        condition: service_completed_successfully
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ${XBOARD_DEPLOY_DIR:?Set XBOARD_DEPLOY_DIR to the same directory used by compose.yaml}/entry/Caddyfile:/etc/caddy/Caddyfile:ro
+      - entry-caddy-data:/data
+      - entry-caddy-config:/config
+      # PEM material written by the updater for content-sourced panel
+      # certificates; same mount point so the rendered Caddyfile paths work
+      # in both containers.
+      - entry-certs:/entry-certs:ro
+    networks:
+      - xboard-internal
+      - xboard-egress
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  xboard-updater:
+    volumes:
+      - entry-caddy-data:/entry-caddy-data:ro
+      - entry-certs:/entry-certs
+
+volumes:
+  entry-caddy-data:
+  entry-caddy-config:
+  entry-certs:

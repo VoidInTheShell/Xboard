@@ -121,13 +121,22 @@ jobs:
           for script in deploy/production/host/*.sh; do bash -n "${script}"; done
           bash -n deploy/updater/bootstrap.sh
           bash -n deploy/updater/panel-hook.sh
+          bash -n install.sh
           bash -n deploy/compose/validate.sh
           export XBOARD_VERSION=v0.0.1-dev.1.1
+          export XBOARD_THEME_VERSION=v0.0.1-dev.1.1
           export XBOARD_ADMIN_VERSION=v0.0.1-dev.1.1
           export XBOARD_UPDATER_VERSION=v0.0.1-dev.1.1
           export XBOARD_DEPLOY_DIR="${GITHUB_WORKSPACE}"
           export XBOARD_PANEL_URL=https://panel.validation.invalid
+          install -d -m 0755 "${GITHUB_WORKSPACE}/secrets" "${GITHUB_WORKSPACE}/entry"
+          umask 027
+          head -c 32 /dev/urandom | base64 | tr -d '=+/' > "${GITHUB_WORKSPACE}/secrets/admin_route_token"
+          umask 022
+          printf '{\n\tadmin :2019\n}\n' > "${GITHUB_WORKSPACE}/entry/Caddyfile"
           ./deploy/compose/validate.sh compose.sample.yaml
+          XBOARD_ENTRY_ENABLED=1 XBOARD_PANEL_DOMAIN=panel.validation.invalid ./deploy/compose/validate.sh compose.sample.yaml
+          docker compose -f compose.sample.yaml -f compose.entry.sample.yaml config --quiet
           docker compose -f deploy/staging/compose.yaml config --no-interpolate > /dev/null
           docker compose -f deploy/production/compose.yaml config --no-interpolate > /dev/null
           docker run --rm --entrypoint php \
@@ -344,7 +353,11 @@ jobs:
           stack="${RUNNER_TEMP}/xboard-compose"
           mkdir -p "${stack}/.docker/.data" "${stack}/storage/logs" "${stack}/storage/app/public" "${stack}/storage/theme" "${stack}/plugins" "${stack}/deploy/updater"
           cp compose.sample.yaml "${stack}/compose.yaml"
-          cp .env.example "${stack}/.env"
+          # The deployment .env carries only the XBOARD_* deployment variables.
+          # Copying .env.example here would preload INSTALLED=false and
+          # CACHE_DRIVER=redis into the installer process and break
+          # xboard:install in the run container.
+          : > "${stack}/.env"
           cp deploy/updater/bootstrap.sh deploy/updater/panel-hook.sh "${stack}/deploy/updater/"
           cat > "${stack}/smoke.override.yaml" <<EOF
           services:
@@ -402,7 +415,7 @@ jobs:
             sleep 2
           done
           if [ "${heartbeat}" != "heartbeat" ]; then
-            "${compose[@]}" logs --tail 200 xboard updater-bootstrap xboard-updater
+            "${compose[@]}" logs --tail 200 xboard xboard-theme updater-bootstrap xboard-updater
             exit 1
           fi
           if "${compose[@]}" logs --no-color updater-bootstrap | grep -Eq "xbu_[A-Za-z0-9]+"; then
@@ -411,6 +424,7 @@ jobs:
           fi
           test "$(docker inspect -f "{{.Config.Image}}" xboard-app)" = "ghcr.io/voidintheshell/xboard:${xboard_version}"
           test "$(docker inspect -f "{{.Config.Image}}" xboard-admin)" = "ghcr.io/voidintheshell/xboard-admin:${admin_version}"
+          test "$(docker inspect -f "{{.Config.Image}}" xboard-theme)" = "ghcr.io/voidintheshell/dk_theme:${theme_version}"
           test "$(docker inspect -f "{{.Config.Image}}" xboard-updater)" = "ghcr.io/voidintheshell/xboard-admin-updater:${admin_version}"
           "${compose[@]}" ps
           "${compose[@]}" down --remove-orphans

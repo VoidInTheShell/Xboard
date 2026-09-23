@@ -248,22 +248,28 @@ def complete(path, assets_dir):
     require(release is not None, "Prepared draft release is missing")
     require(release["draft"], "Release is already public")
     required = [path]
-    if manifest["component"] == "xboard-node":
-        required += [assets_dir / f"{name}-linux-{arch}" for name in ("xboard-node", "xbctl") for arch in ("amd64", "arm64")]
+    if manifest["component"] in ("xboard-node", "xboard"):
+        if manifest["component"] == "xboard-node":
+            required += [assets_dir / f"{name}-linux-{arch}" for name in ("xboard-node", "xbctl") for arch in ("amd64", "arm64")]
         assets_dir.mkdir(parents=True, exist_ok=True)
         installer = Path("install.sh").read_text(encoding="utf-8")
         require(installer.count('DEFAULT_RELEASE_VERSION="latest"') == 1, "Installer version marker missing")
         pinned_installer = assets_dir / "install.sh"
         pinned_installer.write_text(installer.replace('DEFAULT_RELEASE_VERSION="latest"',
                                                     f'DEFAULT_RELEASE_VERSION="{tag}"'), encoding="utf-8", newline="\n")
-        required += [pinned_installer, Path("compose.sample.yaml"), Path("config.yml.example"), Path("updater.sample.json")]
+        required += [pinned_installer, Path("compose.sample.yaml")]
+        if manifest["component"] == "xboard-node":
+            required += [Path("config.yml.example"), Path("updater.sample.json")]
+        else:
+            required += [Path("compose.entry.sample.yaml"), Path(".env.example")]
     for asset in required:
         require(asset.is_file() and asset.stat().st_size > 0, "Missing release asset: " + str(asset))
-    if manifest["component"] == "xboard-node":
-        manifest["binaries"] = {
-            arch: {name: f"https://github.com/{repo}/releases/download/{tag}/{name}-linux-{arch}"
-                   for name in ("xboard-node", "xbctl")} for arch in ("amd64", "arm64")
-        }
+    if manifest["component"] in ("xboard-node", "xboard"):
+        if manifest["component"] == "xboard-node":
+            manifest["binaries"] = {
+                arch: {name: f"https://github.com/{repo}/releases/download/{tag}/{name}-linux-{arch}"
+                       for name in ("xboard-node", "xbctl")} for arch in ("amd64", "arm64")
+            }
         manifest["installer"] = f"https://github.com/{repo}/releases/download/{tag}/install.sh"
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     existing = {a["name"]: a for a in release["assets"]}

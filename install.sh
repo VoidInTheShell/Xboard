@@ -180,15 +180,18 @@ case "$ADMIN_PATH" in
   *) die "admin path must be 8-32 letters, digits, '_' or '-'." ;;
 esac
 
-mkdir -p secrets entry
+mkdir -p secrets deploy/updater
 umask 027
 head -c 32 /dev/urandom | base64 | tr -d '=+/' > secrets/admin_route_token
-chmod 600 secrets/admin_route_token
+# 0640 root:<container gid 1000>: the backend PHP worker runs as www and
+# must read the token for the standalone-admin router middleware.
+chmod 640 secrets/admin_route_token
 chown root:1000 secrets/admin_route_token 2>/dev/null || chgrp 1000 secrets/admin_route_token 2>/dev/null || true
 printf '%s' "$ADMIN_PASSWORD" > secrets/install_admin_password
 chmod 600 secrets/install_admin_password
 
 if [ "$ENTRY" -eq 1 ]; then
+  mkdir -p entry
   printf '{\n\tadmin :2019\n}\n' > entry/Caddyfile
 fi
 
@@ -230,6 +233,17 @@ docker compose "${COMPOSE_FILES[@]}" run --rm \
   || die "panel install failed; see: docker compose ${COMPOSE_FILES[*]} logs xboard"
 rm -f secrets/install_admin_password
 
+# The Compose template bind-mounts the updater bootstrap and panel hook from
+# the deployment directory; provision them from the exact image just installed
+# so they always match the deployed backend version.
+for script in bootstrap.sh panel-hook.sh; do
+  docker run --rm --entrypoint sh "ghcr.io/voidintheshell/xboard:${XBOARD_VERSION}" \
+    -c "cat /www/deploy/updater/${script}" > "deploy/updater/${script}" \
+    || die "cannot extract deploy/updater/${script} from the xboard image"
+  [ -s "deploy/updater/${script}" ] || die "extracted deploy/updater/${script} is empty"
+done
+chmod 755 deploy/updater/bootstrap.sh deploy/updater/panel-hook.sh
+
 log "starting the suite..."
 docker compose "${COMPOSE_FILES[@]}" up -d --wait >/dev/null \
   || die "compose failed; inspect with: docker compose ${COMPOSE_FILES[*]} ps && docker compose ${COMPOSE_FILES[*]} logs"
@@ -258,7 +272,9 @@ if [ "$TEST_USER" -eq 1 ]; then
     || warn "test user creation failed."
 fi
 
-MCP_KEY=$(api POST 'mcp/keys/create' "$AUTH_DATA" '{"name":"installer"}' | jq -r '.data.key // .data.token // empty')
+MCP_KEY=$(api POST 'mcp/keys/create' "$AUTH_DATA" \
+  '{"name":"installer","scope":"full","client":"generic","expires_in_days":"never"}' \
+  | jq -r '.data.secret // empty')
 api POST 'server/certificate/save' "$AUTH_DATA" \
   "{\"scope\":\"panel\",\"name\":\"Panel entry\",\"source_type\":\"acme_http\",\"domains\":[\"${DOMAIN}\"],\"auto_renew\":true,\"email\":\"${ACME_EMAIL}\"}" >/dev/null \
   && log "panel certificate resource registered; the entry updater signs it automatically." \

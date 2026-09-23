@@ -23,6 +23,7 @@ class ConfigSave extends FormRequest
         'commission_distribution_l3' => 'nullable|numeric',
         // site
         'logo' => 'nullable|url:http,https|max:2048',
+        'user_logo' => 'nullable|url:http,https|max:2048',
         'force_https' => '',
         'stop_register' => '',
         'app_name' => '',
@@ -152,6 +153,7 @@ class ConfigSave extends FormRequest
             'telegram_webhook_url.url' => 'Telegram Webhook地址格式不正确，必须携带http(s)://',
             'telegram_discuss_link.url' => 'Telegram群组地址必须为URL格式，必须携带http(s)://',
             'logo.url' => 'LOGO URL格式不正确，必须携带https(s)://',
+            'user_logo.url' => '用户后台 Logo URL 格式不正确，必须携带 http(s)://',
             'admin_login_background.url' => '登录背景 URL 格式不正确，必须携带 http(s)://',
             'admin_login_glass_opacity.integer' => '毛玻璃不透明度必须是 0 到 95 的整数',
             'admin_login_mask_opacity.integer' => '背景遮罩透明度必须是 0 到 90 的整数',

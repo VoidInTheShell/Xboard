@@ -139,6 +139,7 @@ class ConfigController extends Controller
                 'frontend_theme_color' => admin_setting('frontend_theme_color', 'default'),
                 'frontend_background_url' => admin_setting('frontend_background_url'),
                 'self_use_mode' => (bool) admin_setting('self_use_mode', 0),
+                'user_logo' => admin_setting('user_logo'),
                 'user_login_title' => admin_setting('user_login_title'),
                 'user_login_description' => admin_setting('user_login_description'),
                 'admin_login_background' => admin_setting('admin_login_background'),
@@ -264,6 +265,19 @@ class ConfigController extends Controller
         ]);
 
         return $this->storeSiteBrandingImage($request, 'logo', 'png');
+    }
+
+    public function uploadUserLogo(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimetypes:image/png|max:2048|dimensions:width=256,height=256',
+        ], [
+            'file.mimetypes' => '用户后台 Logo 必须为 PNG 图片',
+            'file.dimensions' => '用户后台 Logo 必须为 256 × 256 像素',
+            'file.max' => '用户后台 Logo 不能超过 2 MB',
+        ]);
+
+        return $this->storeSiteBrandingImage($request, 'user_logo', 'png');
     }
 
     public function uploadLoginBackground(Request $request)

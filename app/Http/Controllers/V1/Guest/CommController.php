@@ -29,6 +29,7 @@ class CommController extends Controller
             'app_description' => admin_setting('app_description'),
             'app_url' => admin_setting('app_url'),
             'logo' => admin_setting('logo'),
+            'user_logo' => admin_setting('user_logo'),
             'user_login_title' => admin_setting('user_login_title'),
             'user_login_description' => admin_setting('user_login_description'),
             'self_use_mode' => (int) admin_setting('self_use_mode', 0) ? 1 : 0,

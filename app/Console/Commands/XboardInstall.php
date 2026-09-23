@@ -215,7 +215,10 @@ class XboardInstall extends Command
                     $this->error('ADMIN_SECURE_PATH 仅允许 8-32 位字母、数字、下划线或连字符');
                     return self::FAILURE;
                 }
-                admin_setting(['secure_path' => (string) $adminSecurePath]);
+                // Write the setting row directly: the one-off install container
+                // has no Redis (the settings cache flush would abort it), and
+                // the cache populates from the database on first boot anyway.
+                \App\Models\Setting::createOrUpdate('secure_path', (string) $adminSecurePath);
                 $defaultSecurePath = (string) $adminSecurePath;
             }
             $this->info("访问 http(s)://你的站点/{$defaultSecurePath} 进入管理面板，你可以在用户中心修改你的密码。");

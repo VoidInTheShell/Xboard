@@ -261,7 +261,11 @@ def complete(path, assets_dir):
         if manifest["component"] == "xboard-node":
             required += [Path("config.yml.example"), Path("updater.sample.json")]
         else:
-            required += [Path("compose.entry.sample.yaml"), Path(".env.example")]
+            # GitHub rewrites asset names with a leading dot; ship the env
+            # template under a name it keeps verbatim.
+            env_example = assets_dir / "env.example"
+            env_example.write_text(Path(".env.example").read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
+            required += [Path("compose.entry.sample.yaml"), env_example]
     for asset in required:
         require(asset.is_file() and asset.stat().st_size > 0, "Missing release asset: " + str(asset))
     if manifest["component"] in ("xboard-node", "xboard"):

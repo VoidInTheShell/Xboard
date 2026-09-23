@@ -22,47 +22,70 @@ Xboard is a modern panel system built on Laravel 12, focusing on providing a cle
 
 ## 🚀 Quick Start
 
+The fastest path on a fresh Linux host is the pinned release installer
+(one command, full suite with the Caddy HTTPS entry):
+
+~~~bash
+curl -fsSL -o install.sh https://github.com/VoidInTheShell/Xboard/releases/latest/download/install.sh
+sudo ./install.sh --domain panel.example.com --email you@example.com
+~~~
+
+It deploys the Xboard backend, the DK_Theme user panel, the standalone
+Admin, the updater, and the Caddy entry as one suite, registers the panel
+certificate for automatic ACME, and prints the admin URL, credentials, and an
+MCP key. Upgrades and rollbacks are performed from the Admin panel
+(版本更新) afterwards — never by rerunning the installer.
+
+The manual equivalent:
+
 ~~~bash
 git clone --depth 1 https://github.com/VoidInTheShell/Xboard
 cd Xboard
 cp compose.sample.yaml compose.yaml
-cp .env.example .env
 
-# Fill these with exact tags from the Xboard and Xboard-Admin release manifests.
-cat >> .env <<'EOF'
+# Minimal deployment .env — do NOT cp .env.example over it; the installer
+# merges missing defaults itself.
+cat > .env <<'EOF'
 XBOARD_DEPLOY_DIR=/opt/xboard
 XBOARD_VERSION=vX.Y.Z
+XBOARD_THEME_VERSION=vA.B.C
 XBOARD_ADMIN_VERSION=vA.B.C
 XBOARD_UPDATER_VERSION=vA.B.C
 XBOARD_PANEL_URL=https://panel.example.com
 EOF
 
+install -d -m 0755 secrets
+umask 027 && head -c 32 /dev/urandom | base64 | tr -d '=+/' > secrets/admin_route_token
+chown root:1000 secrets/admin_route_token
+
 ./deploy/compose/validate.sh compose.yaml
-docker compose --env-file .env -f compose.yaml config
-docker compose --env-file .env -f compose.yaml run --rm \
-    -e ENABLE_SQLITE=true \
-    -e ENABLE_REDIS=true \
+docker compose --env-file .env -f compose.yaml up -d --wait
+docker compose --env-file .env -f compose.yaml exec -T \
+    -e ENABLE_SQLITE=1 -e ENABLE_REDIS=1 \
     -e ADMIN_ACCOUNT=admin@example.com \
+    -e ADMIN_PASSWORD=your-password \
     xboard php artisan xboard:install
-docker compose --env-file .env -f compose.yaml up -d
 ~~~
 
-The default template uses four services: the Xboard backend, standalone Admin,
-a private updater, and the one-shot updater bootstrap. The backend, Admin, and
-Updater images use exact published tags; the Admin and Updater tags must match.
-The Updater has no public port and uses the Docker socket for controlled Compose
-replacement and recovery. Treat that socket as host-level authority.
+See [Deploy with Docker Compose](./docs/en/installation/docker-compose.md)
+for the complete four-component guide, the Caddy entry overlay, and the
+existing-reverse-proxy scenario.
 
-All GitHub-published Xboard, Admin, and Updater images are built for
+The default template uses four long-lived services: the Xboard backend, the
+DK_Theme user panel, the standalone Admin, and a private updater, plus the
+one-shot updater bootstrap. All images use exact published tags taken from
+the same Xboard release manifest component suite; the Admin and Updater tags
+must match. The Updater has no public port and uses the Docker socket for
+controlled Compose replacement, entry reloads, and recovery. Treat that
+socket as host-level authority.
+
+All GitHub-published Xboard, Admin, Theme, and Updater images are built for
 linux/amd64 and linux/arm64. Local acceptance on Windows is intentionally
 limited to linux/amd64; do not locally build or run ARM64.
 
-The full Theme-backed deployment remains under [staging](deploy/staging/README.md)
-and [production](deploy/production/README.md). The default template does not
-modify or include DK_Theme.
-
-> After installation, visit the standalone Admin at http://SERVER_IP:7003 and
-> the backend at http://SERVER_IP:7001 unless a reverse proxy is configured.
+> After installation, the user panel is served through the theme container
+> (published fallback port 7002) and the Admin at
+> `https://PANEL_HOST/<admin-path>/` through the theme.
 > ⚠️ Make sure to save the admin credentials shown during installation
 
 ## 📖 Documentation

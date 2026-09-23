@@ -63,7 +63,7 @@ class XboardInstall extends Command
             $this->info("/_/  \_\|____/ \___/ \__,_|_|  \__,_| ");
             if (
                 (File::exists(base_path() . '/.env') && $this->getEnvValue('INSTALLED'))
-                || (getenv('INSTALLED', false) && $isDocker)
+                || ($this->processEnvInstalled() && $isDocker)
             ) {
                 $securePath = admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key'))));
                 $this->info("访问 http(s)://你的站点/{$securePath} 进入管理面板，你可以在用户中心修改你的密码。");
@@ -143,8 +143,20 @@ class XboardInstall extends Command
                 }
             }
 
-            if (!copy(base_path() . '/.env.example', base_path() . '/.env')) {
-                abort(500, '复制环境文件失败，请检查目录权限');
+            // A deployment .env (for example the Docker Compose template) already
+            // carries the runtime configuration. Only seed a missing or emptied
+            // .env from the example; a partially filled deployment .env keeps
+            // its own values and only receives defaults for keys it omits, so
+            // the installer can never clobber deployment variables such as
+            // XBOARD_*.
+            $envPath = base_path() . '/.env';
+            $examplePath = base_path() . '/.env.example';
+            if (!File::exists($envPath) || filesize($envPath) === 0) {
+                if (!copy($examplePath, $envPath)) {
+                    abort(500, '复制环境文件失败，请检查目录权限');
+                }
+            } elseif (File::exists($examplePath)) {
+                $this->mergeEnvDefaults($envPath, $examplePath);
             }
             ;
             $email = !empty($adminAccount) ? $adminAccount : text(
@@ -197,6 +209,15 @@ class XboardInstall extends Command
             }
 
             $defaultSecurePath = hash('crc32b', config('app.key'));
+            $adminSecurePath = getenv('ADMIN_SECURE_PATH', false);
+            if ($adminSecurePath !== false && $adminSecurePath !== '') {
+                if (!preg_match('/^[A-Za-z0-9_-]{8,32}$/', (string) $adminSecurePath)) {
+                    $this->error('ADMIN_SECURE_PATH 仅允许 8-32 位字母、数字、下划线或连字符');
+                    return self::FAILURE;
+                }
+                admin_setting(['secure_path' => (string) $adminSecurePath]);
+                $defaultSecurePath = (string) $adminSecurePath;
+            }
             $this->info("访问 http(s)://你的站点/{$defaultSecurePath} 进入管理面板，你可以在用户中心修改你的密码。");
             $envConfig['INSTALLED'] = true;
             $this->saveToEnv($envConfig);
@@ -245,6 +266,24 @@ class XboardInstall extends Command
         return getenv($name, false);
     }
 
+    /**
+     * Whether the process environment says the panel is already installed.
+     *
+     * Laravel's bootstrap exports every .env entry through putenv(), so a
+     * literal `INSTALLED=false` line still surfaces as the truthy string
+     * "false" from getenv(). Cast explicitly so only real truthy values
+     * (1/true/on/yes) short-circuit the installer.
+     */
+    private function processEnvInstalled(): bool
+    {
+        $value = getenv('INSTALLED', false);
+        if ($value === false || $value === '') {
+            return false;
+        }
+
+        return filter_var($value, FILTER_VALIDATE_BOOL);
+    }
+
     private function set_env_var($key, $value)
     {
         $value = !strpos($value, ' ') ? $value : '"' . $value . '"';
@@ -268,6 +307,44 @@ class XboardInstall extends Command
             self::set_env_var($key, $value);
         }
         return true;
+    }
+
+    /**
+     * Append every KEY=VALUE line from the example that the deployment .env
+     * does not define yet. Existing lines are never touched; the merged
+     * defaults run after the short-circuit check, so an example INSTALLED
+     * line cannot block an installation of a minimal deployment .env.
+     */
+    private function mergeEnvDefaults(string $envPath, string $examplePath): void
+    {
+        $existing = file_get_contents($envPath);
+        $example = file_get_contents($examplePath);
+        if ($existing === false || $example === false || $existing === '') {
+            return;
+        }
+
+        $definedKeys = [];
+        foreach (preg_split('/\r\n|\r|\n/', $existing) as $line) {
+            if (preg_match('/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/', $line, $matches)) {
+                $definedKeys[strtoupper($matches[1])] = true;
+            }
+        }
+
+        $append = [];
+        foreach (preg_split('/\r\n|\r|\n/', $example) as $line) {
+            if (preg_match('/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/', $line, $matches)) {
+                $key = strtoupper($matches[1]);
+                if (!isset($definedKeys[$key])) {
+                    $append[] = $line;
+                    $definedKeys[$key] = true;
+                }
+            }
+        }
+
+        if ($append !== []) {
+            $content = rtrim($existing, "\r\n") . "\n\n# Defaults restored from .env.example\n" . implode("\n", $append) . "\n";
+            file_put_contents($envPath, $content);
+        }
     }
 
     function getEnvValue($key, $default = null)

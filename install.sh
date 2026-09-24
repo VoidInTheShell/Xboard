@@ -113,7 +113,7 @@ resolve_release() {
 [ "$DEFAULT_RELEASE_VERSION" = "latest" ] || VERSION="$DEFAULT_RELEASE_VERSION"
 RELEASE_TAG=$(resolve_release)
 [ -n "$RELEASE_TAG" ] || die "could not resolve a release (GitHub API rate limit? pass --version or retry later)."
-log "Release: ${RELEASE_TAG} (channel: ${CHANNEL:-pinned})"
+log "Release: ${RELEASE_TAG} (channel: ${VERSION:+pinned}${VERSION:-$CHANNEL})"
 
 MANIFEST=$(curl -fsSL --retry 3 "${GH_BASE}/releases/download/${RELEASE_TAG}/release-manifest.json") \
   || die "release-manifest.json missing for ${RELEASE_TAG}."
@@ -277,7 +277,9 @@ MCP_KEY=$(api POST 'mcp/keys/create' "$AUTH_DATA" \
   | jq -r '.data.secret // empty')
 api POST 'server/certificate/save' "$AUTH_DATA" \
   "{\"scope\":\"panel\",\"name\":\"Panel entry\",\"source_type\":\"acme_http\",\"domains\":[\"${DOMAIN}\"],\"auto_renew\":true,\"email\":\"${ACME_EMAIL}\"}" >/dev/null \
-  && log "panel certificate resource registered; the entry updater signs it automatically." \
+  && { [ "$ENTRY" -eq 1 ] \
+      && log "panel certificate resource registered; the entry updater signs it automatically." \
+      || log "panel certificate resource registered (informational; TLS terminates on the external entry)."; } \
   || warn "certificate resource creation failed; seed domains still cover the panel."
 
 # ----------------------------------------------------------------- summary --

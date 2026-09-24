@@ -49,7 +49,10 @@ services:
       - "443:443"
       - "443:443/udp"
     volumes:
-      - ${XBOARD_DEPLOY_DIR:?Set XBOARD_DEPLOY_DIR to the same directory used by compose.yaml}/entry/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Directory mount (not a single file): the updater renders the
+      # Caddyfile atomically on the host, and a file bind would keep the
+      # container pinned to the old inode after every rewrite.
+      - ${XBOARD_DEPLOY_DIR:?Set XBOARD_DEPLOY_DIR to the same directory used by compose.yaml}/entry:/etc/caddy:ro
       - entry-caddy-data:/data
       - entry-caddy-config:/config
       # PEM material written by the updater for content-sourced panel

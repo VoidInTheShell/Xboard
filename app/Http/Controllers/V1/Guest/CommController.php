@@ -36,6 +36,7 @@ class CommController extends Controller
             'admin_login_background' => admin_setting('admin_login_background'),
             'admin_login_glass_opacity' => (int) admin_setting('admin_login_glass_opacity', 60),
             'admin_login_mask_opacity' => (int) admin_setting('admin_login_mask_opacity', 40),
+            'admin_login_theme_color' => admin_setting('admin_login_theme_color', ''),
             'user_hidden_menus' => (array) admin_setting('user_hidden_menus', []),
             'admin_hidden_menus' => (array) admin_setting('admin_hidden_menus', []),
             'user_support_enabled' => (bool) admin_setting('user_support_enabled', 1),

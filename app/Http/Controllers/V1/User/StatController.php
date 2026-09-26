@@ -13,6 +13,11 @@ class StatController extends Controller
 {
     public function getTrafficLog(Request $request)
     {
+        // The user dashboard needs to tell "statistics disabled" apart from
+        // "no data yet", so the payload always carries the feature flag.
+        if (!\App\Services\Logs\LogSettings::enabled('legacy')) {
+            return $this->success(['enabled' => false, 'logs' => []]);
+        }
         $startDate = now()->startOfMonth()->timestamp;
         $records = StatUser::query()
             ->where('user_id', $request->user()->id)
@@ -21,6 +26,6 @@ class StatController extends Controller
             ->get();
 
         $data = TrafficLogResource::collection(collect($records));
-        return $this->success($data);
+        return $this->success(['enabled' => true, 'logs' => $data]);
     }
 }

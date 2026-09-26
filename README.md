@@ -33,7 +33,9 @@ sudo ./install.sh --domain panel.example.com --email you@example.com
 It deploys the Xboard backend, the DK_Theme user panel, the standalone
 Admin, the updater, and the Caddy entry as one suite, registers the panel
 certificate for automatic ACME, and prints the admin URL, credentials, and an
-MCP key. Upgrades and rollbacks are performed from the Admin panel
+MCP key. On a host that already runs its own reverse proxy, add `--no-entry`
+and follow [Scenario B](./docs/en/installation/docker-compose.md#scenario-b--existing-reverse-proxy-npm-and-friends)
+in the compose guide. Upgrades and rollbacks are performed from the Admin panel
 (版本更新) afterwards — never by rerunning the installer.
 
 The manual equivalent:

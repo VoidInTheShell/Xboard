@@ -191,17 +191,54 @@ Port 80 must stay reachable for ACME HTTP-01 and redirects.
 
 Deployments that already run a containerized reverse proxy (Nginx Proxy
 Manager, BunkerWeb, Traefik, …) keep terminating TLS themselves and do not
-use the entry overlay at all.
+use the entry overlay at all. With the install script, add `--no-entry`:
+it skips the Caddy entry, the port 80/443 preflight, and leaves
+`XBOARD_ENTRY_ENABLED` unset.
 
 1. Leave `XBOARD_ENTRY_ENABLED` unset. The updater then performs no entry
    management.
-2. Point the proxy at the theme container. On the same Docker host, join the
-   proxy network to the `xboard-internal` Compose network via a small
-   administrator-owned overlay, and proxy `panel.example.com` to
-   `http://xboard-theme:80`.
-3. Alternatively proxy the published fallback port
-   (`XBOARD_THEME_PORT`, default 7002) from anywhere.
-4. Set `XBOARD_PANEL_URL` to the public HTTPS URL; the updater reports
+2. Point the proxy at the theme container. On the same Docker host, attach
+   the `xboard-theme` service to the proxy's external Docker network through
+   a small administrator-owned overlay, and proxy `panel.example.com` to
+   `http://xboard-theme:80`. For example, with the proxy network
+   `proxy-net`:
+
+   ~~~yaml
+   # proxy-net.yaml — reverse-proxy integration overlay
+   services:
+     xboard-theme:
+       networks:
+         proxy-net:
+           aliases:
+             - theme
+   networks:
+     proxy-net:
+       name: proxy-net
+       external: true
+   ~~~
+
+3. Register the overlay with the updater so panel-driven updates keep it
+   applied. Add it to the deployment `.env`:
+
+   ~~~dotenv
+   XBOARD_COMPOSE_EXTRA_FILE=/opt/xboard/proxy-net.yaml
+   ~~~
+
+   then reapply the stack so the one-shot bootstrap records the extra file
+   in the updater configuration (bootstrap is idempotent and keeps the
+   existing executor credential):
+
+   ~~~bash
+   docker compose --env-file .env -f compose.yaml -f proxy-net.yaml up -d
+   ~~~
+
+   Without this step the next update performed from the Admin panel
+   recreates `xboard-theme` without the proxy-network attachment and the
+   panel becomes unreachable through the proxy.
+4. Alternatively proxy the published fallback port
+   (`XBOARD_THEME_PORT`, default 7002) from anywhere; that variant needs
+   no overlay or extra file.
+5. Set `XBOARD_PANEL_URL` to the public HTTPS URL; the updater reports
    through it.
 
 Everything routed through the theme keeps working: the user frontend, the

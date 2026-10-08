@@ -15,6 +15,9 @@ class AuditWriter
         if ($status>=400 && !LogSettings::get()['auditFailures']) return;
         $key=$request->attributes->get('mcp_key');
         $data=RequestLog::redactRequestData($request->all());
+        if (str_starts_with($action, 'subscribe_template.remote.') && array_key_exists('url', $data)) {
+            $data['url'] = '[REDACTED]';
+        }
         $json=json_encode($data,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE);
         if (strlen($json)>8192) $json=json_encode(['summary'=>'请求字段超出审计记录大小限制。']);
         AdminAuditLog::create(['admin_id'=>$actor->id,'actor_type'=>$key instanceof McpKey?'mcp':'admin',

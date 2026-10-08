@@ -70,6 +70,13 @@ class AdminRoute
                 $router->post('/testSendMail', [ConfigController::class, 'testSendMail']);
             });
 
+            $router->group(['prefix' => 'subscribe-template/remote', 'middleware' => 'throttle:30,1'], function ($router) {
+                $controller = \App\Http\Controllers\V2\Admin\RemoteSubscribeTemplateController::class;
+                foreach (['fetch', 'history'] as $action) $router->get('/' . $action, [$controller, $action]);
+                $router->get('/history-detail', [$controller, 'historyDetail']);
+                foreach (['save', 'refresh', 'pause', 'restore', 'drop'] as $action) $router->post('/' . $action, [$controller, $action]);
+            });
+
             // Client catalog
             $router->group([
                 'prefix' => 'client'

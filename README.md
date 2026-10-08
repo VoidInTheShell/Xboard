@@ -176,3 +176,34 @@ automatic proof of subscription/key leakage or grounds for an automatic ban.
 ## 🤝 Contributing
 
 Issues and Pull Requests are welcome to help improve the project.
+
+## Remote subscription templates
+
+In Admin → Subscription templates → Remote templates, configure each client format
+independently. Saving downloads and validates the raw HTTP(S) file before replacing
+the active template. Enable automatic updates with a 1–720 hour interval. Turning
+automatic updates off does not require the source to be reachable.
+
+Downloads accept public destinations only, verify every redirect, reject HTTPS to
+HTTP downgrades, and are limited to 2 MiB. Sing-box requires JSON with `outbounds`;
+Clash/Clash Meta/Stash require YAML with `proxies` and `proxy-groups`; Surge/Surfboard
+require the standard sections and `$proxies`/`$proxy_group` injection placeholders.
+Failed downloads and stale concurrent updates leave the active template intact.
+
+History includes the pre-upgrade template, manual changes, changed downloads and
+restores. Restoring creates a new history entry and pauses automatic updates by
+default; the active history entry cannot be deleted. Unchanged downloads update
+check times without duplicating content history.
+
+Apply the normal database migration before installing the matching Admin build.
+Existing templates are preserved and automatic updates start disabled. The existing
+Laravel scheduler runs `subscribe-template:refresh` every minute and only fetches
+templates whose interval has elapsed; no extra service or deployment workflow is
+required. Manual checks can run `php artisan subscribe-template:refresh`.
+
+Admin APIs under `subscribe-template/remote/` (`fetch`, `save`, `refresh`, `pause`,
+`history`, `history-detail`, `restore`, `drop`) are available through the existing
+MCP catalog in the `system` domain. Writes require the per-template
+`expected_revision`; MCP also requires its global change version and any confirmation
+reported by the live catalog. Remote URLs are encrypted at rest and omitted from
+audit payloads.

@@ -20,7 +20,7 @@ class RequestLog
     {
         foreach ($data as $key => $value) {
             $name = strtolower((string) $key);
-            if (in_array($name, self::PRIVATE_CONFIG_KEYS, true)
+            if (str_starts_with($name, 'subscribe_template_') || in_array($name, self::PRIVATE_CONFIG_KEYS, true)
                 || preg_match('/password|token|secret|decryption|encryption|private.?key|cert_content|key_content|dns_env|dns_credentials|auth_data|uuid/i', $name)
                 || in_array($name, self::SENSITIVE_KEYS, true)) {
                 $data[$key] = '[REDACTED]';
@@ -39,25 +39,31 @@ class RequestLog
         $isMutation = $operation !== null && !$operation['read_only'];
         $initialTransactionLevel = DB::transactionLevel();
 
-        if ($isMutation) {
-            DB::beginTransaction();
-        }
-
+        $transactionStarted = false;
         try {
             if ($isMutation) {
+                $controller = $request->route()->getController();
+                if ($controller instanceof \App\Contracts\PreparesAdminMutation) {
+                    // Download first; recheck the global MCP and template revisions
+                    // inside the short write transaction before activating anything.
+                    app(ChangeEventService::class)->assertExpectedVersion($request);
+                    $controller->prepareMutation($request);
+                }
+                DB::beginTransaction();
+                $transactionStarted = true;
                 app(ChangeEventService::class)->assertExpectedVersion($request);
             }
 
             $response = $next($request);
             $admin = $request->user();
             if (!$admin || !$admin->is_admin) {
-                $this->finishTransaction($isMutation, $initialTransactionLevel, false);
+                $this->finishTransaction($transactionStarted, $initialTransactionLevel, false);
                 return $response;
             }
 
             $successful = $response->getStatusCode() >= 200 && $response->getStatusCode() < 300;
             if (!$successful) {
-                $this->finishTransaction($isMutation, $initialTransactionLevel, false);
+                $this->finishTransaction($transactionStarted, $initialTransactionLevel, false);
                 \App\Services\Logs\AuditWriter::attempt($request,$operation['id'] ?? $this->resolveAction($request->path()),$response->getStatusCode());
                 return $response;
             }
@@ -70,10 +76,10 @@ class RequestLog
                 $changeEvents->commitMutation($request, $operation);
             }
 
-            $this->finishTransaction($isMutation, $initialTransactionLevel, true);
+            $this->finishTransaction($transactionStarted, $initialTransactionLevel, true);
             return $response;
         } catch (ChangeVersionConflictException $e) {
-            $this->finishTransaction($isMutation, $initialTransactionLevel, false);
+            $this->finishTransaction($transactionStarted, $initialTransactionLevel, false);
             \App\Services\Logs\AuditWriter::attempt($request,$operation['id'] ?? $this->resolveAction($request->path()),409);
             return response()->json([
                 'status' => 'fail',
@@ -84,8 +90,8 @@ class RequestLog
                 ],
             ], 409);
         } catch (\Throwable $e) {
-            $this->finishTransaction($isMutation, $initialTransactionLevel, false);
-            $status=$e instanceof \Illuminate\Validation\ValidationException ? 422 : ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface ? $e->getStatusCode() : 500);
+            $this->finishTransaction($transactionStarted, $initialTransactionLevel, false);
+            $status=$e instanceof \App\Exceptions\ApiException ? (int) $e->getCode() : ($e instanceof \Illuminate\Validation\ValidationException ? 422 : ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface ? $e->getStatusCode() : 500));
             \App\Services\Logs\AuditWriter::attempt($request,$operation['id'] ?? $this->resolveAction($request->path()),$status);
             if (!isset($response)) {
                 throw $e;

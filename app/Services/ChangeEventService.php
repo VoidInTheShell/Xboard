@@ -35,7 +35,7 @@ class ChangeEventService
 
         $mcpKey = $request->attributes->get('mcp_key');
         $admin = $request->user();
-        $actorType = $mcpKey instanceof McpKey ? 'mcp' : 'admin';
+        $actorType = $request->attributes->get('system_mutation') === true ? 'system' : ($mcpKey instanceof McpKey ? 'mcp' : 'admin');
         $actorId = $mcpKey instanceof McpKey ? $mcpKey->id : $admin?->id;
         $requestId = $this->requestId($request);
 
@@ -57,6 +57,14 @@ class ChangeEventService
         }
 
         return $event;
+    }
+
+    public function commitSystemMutation(string $domain, string $resource, string $action, string $id): ChangeEvent
+    {
+        $request = Request::create('/', 'POST', ['id' => $id]);
+        $request->attributes->set('system_mutation', true);
+        $request->setUserResolver(fn() => null);
+        return $this->commitMutation($request, ['domain' => $domain, 'resource' => $resource, 'id' => $action]);
     }
 
     public function assertExpectedVersion(Request $request): void

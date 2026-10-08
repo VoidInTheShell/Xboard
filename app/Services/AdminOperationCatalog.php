@@ -15,6 +15,7 @@ class AdminOperationCatalog
         'user' => 'accounts',
         'client' => 'accounts',
         'config' => 'system',
+        'subscribe-template' => 'system',
         'order' => 'finance',
         'payment' => 'finance',
         'coupon' => 'finance',
@@ -131,11 +132,11 @@ class AdminOperationCatalog
         $dangerous = !$readOnly && (
             $this->isDangerousAction($actionSegment)
             || $path === 'update/tasks'
-            || in_array($path, ['server/certificate/save', 'server/certificate/renew', 'server/certificate/drop'], true)
+            || in_array($path, ['server/certificate/save', 'server/certificate/renew', 'server/certificate/drop', 'subscribe-template/remote/save', 'subscribe-template/remote/refresh', 'subscribe-template/remote/restore'], true)
         );
         preg_match_all('/\{([^}]+)\}/', $path, $pathMatches);
 
-        return [
+        $descriptor = [
             'id' => $this->operationId($path, $method),
             'method' => $method,
             'path' => $path,
@@ -149,6 +150,23 @@ class AdminOperationCatalog
             'path_parameters' => $pathMatches[1] ?? [],
             'route_action' => $route->getActionName(),
         ];
+
+        if (str_starts_with($path, 'subscribe-template/remote/')) {
+            $fields = [['name' => 'name', 'type' => 'string', 'required' => true, 'enum' => RemoteSubscribeTemplateService::NAMES]];
+            if (!$readOnly) $fields[] = ['name' => 'expected_revision', 'type' => 'string', 'required' => true, 'description' => 'Use the per-template revision from remote/fetch, in addition to the MCP change version.'];
+            if (in_array($actionSegment, ['history-detail', 'restore', 'drop'], true)) $fields[] = ['name' => 'id', 'type' => 'integer', 'required' => true];
+            if ($actionSegment === 'pause') $fields[] = ['name' => 'interval_hours', 'type' => 'integer', 'minimum' => 1, 'maximum' => 720];
+            if ($actionSegment === 'history') $fields[] = ['name' => 'page', 'type' => 'integer', 'default' => 1];
+            if ($actionSegment === 'restore') $fields[] = ['name' => 'pause_auto_update', 'type' => 'boolean', 'default' => true];
+            if ($actionSegment === 'save') $fields = array_merge($fields, [
+                ['name' => 'url', 'type' => 'string', 'required' => true, 'description' => 'Public HTTP(S) raw template URL. Saving downloads and activates it only after validation.'],
+                ['name' => 'auto_update', 'type' => 'boolean', 'required' => true],
+                ['name' => 'interval_hours', 'type' => 'integer', 'required' => true, 'minimum' => 1, 'maximum' => 720],
+            ]);
+            $descriptor['request_fields'] = $fields;
+            if ($actionSegment === 'pause') $descriptor['description'] = 'Disable automatic updates without fetching the remote URL.';
+        }
+        return $descriptor;
     }
 
     private function canonicalMethod(Route $route, string $path): string

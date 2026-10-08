@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class SubscribeTemplate extends Model
 {
@@ -23,6 +24,13 @@ class SubscribeTemplate extends Model
     protected $casts = [
         'name' => 'string',
         'content' => 'string',
+        'remote_url' => 'encrypted',
+        'auto_update' => 'boolean',
+        'interval_hours' => 'integer',
+        'revision' => 'integer',
+        'last_checked_at' => 'datetime',
+        'last_updated_at' => 'datetime',
+        'next_update_at' => 'datetime',
     ];
 
     private static string $cachePrefix = 'subscribe_template:';
@@ -31,13 +39,17 @@ class SubscribeTemplate extends Model
     {
         $cacheKey = self::$cachePrefix . $name;
 
-        return Cache::store('redis')->remember($cacheKey, 3600, function () use ($name) {
+        $read = function () use ($name) {
             $content = self::where('name', $name)->value('content');
             if (is_string($content) && trim($content) !== '') {
                 return $content;
             }
             return self::defaultContent($name);
-        });
+        };
+        // Never publish uncommitted content into the shared cache, and allow
+        // a transaction to read its own template writes.
+        if (DB::transactionLevel() > 0) return $read();
+        return Cache::store('redis')->remember($cacheKey, 3600, $read);
     }
 
     public static function defaultContent(string $name): ?string
@@ -50,11 +62,7 @@ class SubscribeTemplate extends Model
 
     public static function setContent(string $name, ?string $content): void
     {
-        self::updateOrCreate(
-            ['name' => $name],
-            ['content' => $content]
-        );
-        Cache::store('redis')->forget(self::$cachePrefix . $name);
+        app(\App\Services\RemoteSubscribeTemplateService::class)->saveManual($name, $content);
     }
 
     public static function getAllContents(): array

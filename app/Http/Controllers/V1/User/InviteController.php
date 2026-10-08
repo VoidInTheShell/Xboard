@@ -82,8 +82,8 @@ class InviteController extends Controller
 
     private function assertCommissionAccess(?User $user): void
     {
-        if ((bool) admin_setting('self_use_mode', 0) && !$user?->is_admin && !$user?->is_staff) {
-            throw new ApiException('自用模式下普通用户不可访问邀请与佣金功能。', 403);
+        if ((bool) admin_setting('self_use_mode', 0)) {
+            throw new ApiException('自用模式下用户端不可访问邀请与佣金功能。', 403);
         }
     }
 }

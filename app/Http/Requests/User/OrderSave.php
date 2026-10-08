@@ -9,16 +9,12 @@ class OrderSave extends FormRequest
 {
     public function authorize(): bool
     {
-        $user = $this->user();
-        return !((bool) admin_setting('self_use_mode', 0)
-            && $user
-            && !$user->is_admin
-            && !$user->is_staff);
+        return !(bool) admin_setting('self_use_mode', 0);
     }
 
     protected function failedAuthorization(): void
     {
-        throw new ApiException('自用模式下普通用户不可访问套餐与订单功能。', 403);
+        throw new ApiException('自用模式下用户端不可访问套餐与订单功能。', 403);
     }
 
     /**

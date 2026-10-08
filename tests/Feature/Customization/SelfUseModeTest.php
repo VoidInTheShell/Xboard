@@ -79,7 +79,7 @@ class SelfUseModeTest extends TestCase
             ->assertJsonPath('data.is_staff', false);
     }
 
-    public function test_self_use_mode_blocks_regular_purchase_apis_but_preserves_staff_access(): void
+    public function test_self_use_mode_blocks_purchase_apis_for_every_user_panel_role_but_preserves_admin_api(): void
     {
         admin_setting(['self_use_mode' => true]);
 
@@ -96,12 +96,17 @@ class SelfUseModeTest extends TestCase
         foreach ([['is_admin' => true], ['is_staff' => true]] as $role) {
             Sanctum::actingAs($this->makeUser($role));
             $this->getJson($this->routePath(UserPlanController::class . '@fetch'))
-                ->assertOk();
+                ->assertForbidden();
             $this->getJson($this->routePath(GuestPlanController::class . '@fetch'))
-                ->assertOk();
+                ->assertForbidden();
             $this->getJson($this->routePath(UserOrderController::class . '@fetch'))
-                ->assertOk();
+                ->assertForbidden();
         }
+        Sanctum::actingAs($this->makeUser(['is_admin' => true]));
+        $this->getJson($this->routePath(\App\Http\Controllers\V2\Admin\PlanController::class . '@fetch'))
+            ->assertOk();
+        admin_setting(['self_use_mode' => false]);
+        $this->getJson($this->routePath(UserPlanController::class . '@fetch'))->assertOk();
     }
 
     public function test_self_use_mode_blocks_invite_and_commission_apis_for_regular_users(): void
@@ -123,9 +128,11 @@ class SelfUseModeTest extends TestCase
             'withdraw_account' => 'test@example.com',
         ])->assertForbidden();
 
-        Sanctum::actingAs($this->makeUser(['is_staff' => true]));
-        $this->getJson($this->routePath(InviteController::class . '@fetch'))
-            ->assertOk();
+        foreach ([['is_admin' => true], ['is_staff' => true]] as $role) {
+            Sanctum::actingAs($this->makeUser($role));
+            $this->getJson($this->routePath(InviteController::class . '@fetch'))->assertForbidden();
+            $this->postJson($this->routePath(UserOrderController::class . '@save'), [])->assertForbidden();
+        }
     }
 
     public function test_machine_install_command_uses_the_forked_node_installer(): void

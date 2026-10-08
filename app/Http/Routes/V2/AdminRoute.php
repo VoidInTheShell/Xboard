@@ -63,6 +63,7 @@ class AdminRoute
                 $router->post('/save', [ConfigController::class, 'save']);
                 $router->post('/uploadLogo', [ConfigController::class, 'uploadLogo']);
                 $router->post('/uploadUserLogo', [ConfigController::class, 'uploadUserLogo']);
+                $router->post('/uploadLoginImage', [ConfigController::class, 'uploadLoginImage']);
                 $router->post('/uploadLoginBackground', [ConfigController::class, 'uploadLoginBackground']);
                 $router->get('/getEmailTemplate', [ConfigController::class, 'getEmailTemplate']);
                 $router->get('/getThemeTemplate', [ConfigController::class, 'getThemeTemplate']);

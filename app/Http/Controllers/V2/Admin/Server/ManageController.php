@@ -169,6 +169,20 @@ class ManageController extends Controller
             'show' => 'nullable|integer',
             'machine_id' => 'nullable|integer|exists:v2_server_machine,id',
             'enabled' => 'nullable|boolean',
+            'name' => 'sometimes|required|string|max:255',
+            'host' => 'sometimes|required|string|max:255',
+            'port' => 'sometimes|required|integer|min:1|max:65535',
+            'rate' => 'sometimes|required|numeric|min:0',
+            'transfer_enable' => 'sometimes|required|integer|min:0',
+            'tags' => 'sometimes|array|max:50',
+            'tags.*' => 'required|string|max:255',
+            'group_ids' => 'sometimes|array',
+            'group_ids.*' => 'integer|exists:v2_server_group,id',
+            'rate_time_enable' => 'sometimes|boolean',
+            'rate_time_ranges' => 'sometimes|array',
+            'rate_time_ranges.*.start' => 'required_with:rate_time_ranges|date_format:H:i',
+            'rate_time_ranges.*.end' => 'required_with:rate_time_ranges|date_format:H:i',
+            'rate_time_ranges.*.rate' => 'required_with:rate_time_ranges|numeric|min:0',
         ]);
 
         $server = Server::find($request->id);
@@ -184,9 +198,10 @@ class ManageController extends Controller
                 // This check intentionally runs even for disabled nodes: a
                 // disabled row is still the source of the next machine
                 // configuration and must never retain an invalid resource.
-                if ($willRun || array_key_exists('machine_id', $params)) {
+                $changesRuntime = array_key_exists('machine_id', $params) || array_key_exists('enabled', $params);
+                if ($changesRuntime && ($willRun || array_key_exists('machine_id', $params))) {
                     $this->validateServerCandidate($server, $params);
-                } else {
+                } elseif ($changesRuntime) {
                     $candidate = clone $server;
                     $candidate->fill($params);
                     $this->validateCertificateMachine($candidate);
@@ -202,6 +217,9 @@ class ManageController extends Controller
                     $server->enabled = (bool) $params['enabled'];
                 }
 
+                foreach (['name', 'host', 'port', 'rate', 'transfer_enable', 'tags', 'group_ids', 'rate_time_enable', 'rate_time_ranges'] as $field) {
+                    if (array_key_exists($field, $params)) $server->setAttribute($field, $params[$field]);
+                }
                 if (!$server->save()) {
                     throw new ApiException('保存失败', 500);
                 }

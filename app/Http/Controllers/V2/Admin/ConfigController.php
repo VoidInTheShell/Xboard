@@ -142,6 +142,9 @@ class ConfigController extends Controller
                 'user_logo' => admin_setting('user_logo'),
                 'user_login_title' => admin_setting('user_login_title'),
                 'user_login_description' => admin_setting('user_login_description'),
+                'admin_login_image' => admin_setting('admin_login_image', ''),
+                'admin_login_image_width' => (int) admin_setting('admin_login_image_width', 160),
+                'admin_login_image_height' => (int) admin_setting('admin_login_image_height', 160),
                 'admin_login_background' => admin_setting('admin_login_background'),
                 'admin_login_glass_opacity' => (int) admin_setting('admin_login_glass_opacity', 60),
                 'admin_login_mask_opacity' => (int) admin_setting('admin_login_mask_opacity', 40),
@@ -281,6 +284,13 @@ class ConfigController extends Controller
         return $this->storeSiteBrandingImage($request, 'user_logo', 'png');
     }
 
+    public function uploadLoginImage(Request $request)
+    {
+        $request->validate(['file' => 'required|file|mimes:png,jpg,jpeg,webp|max:8192|dimensions:max_width=8192,max_height=8192']);
+        $extension = strtolower($request->file('file')->extension() ?: 'png');
+        return $this->storeSiteBrandingImage($request, 'admin_login_image', $extension);
+    }
+
     public function uploadLoginBackground(Request $request)
     {
         $request->validate([
@@ -296,8 +306,8 @@ class ConfigController extends Controller
     }
 
     /**
-     * Store a managed site-branding image and replace the previous managed
-     * file for the same setting so uploads never accumulate.
+     * Store an immutable draft image. Existing URLs remain valid if the caller
+     * cancels or the later configuration save fails.
      */
     private function storeSiteBrandingImage(Request $request, string $setting, string $extension)
     {
@@ -306,15 +316,6 @@ class ConfigController extends Controller
         $path = Storage::disk('public')->putFileAs('site-branding', $file, $filename);
         if (!$path) {
             return $this->fail([500, '图片上传失败']);
-        }
-
-        $previous = admin_setting($setting);
-        $previousPath = is_string($previous) ? parse_url($previous, PHP_URL_PATH) : null;
-        if (is_string($previousPath) && str_starts_with($previousPath, '/storage/site-branding/')) {
-            $managedPath = substr($previousPath, strlen('/storage/'));
-            if ($managedPath !== $path) {
-                Storage::disk('public')->delete($managedPath);
-            }
         }
 
         return $this->success(['url' => url(Storage::disk('public')->url($path))]);

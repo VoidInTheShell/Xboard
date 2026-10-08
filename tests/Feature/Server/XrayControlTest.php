@@ -82,7 +82,7 @@ class XrayControlTest extends TestCase
         // Legacy panels stored a matchless direct row as the default route.
         // It is omitted from the editable projection and replaced in the
         // runtime payload by an explicit final tcp/udp catch-all.
-        $this->assertCount(3, $snapshot['effective_config']->routing->rules);
+        $this->assertCount(6, $snapshot['effective_config']->routing->rules);
         $this->assertSame('api', $snapshot['effective_config']->routing->rules[0]->outboundTag);
         $this->assertSame('direct', $snapshot['default_outbound_tag']);
         $this->assertSame('direct', $snapshot['effective_config']->outbounds[0]->tag);
@@ -95,14 +95,15 @@ class XrayControlTest extends TestCase
         $canonical = XrayConfigService::effective($node);
         $this->assertTrue($canonical->routing->rules[0]->enabled);
         $this->assertSame(['api'], $canonical->routing->rules[0]->inboundTag);
-        $this->assertCount(3, $canonical->routing->rules);
+        $this->assertCount(6, $canonical->routing->rules);
 
         $config = $node->xray_config;
-        $config->routing->rules[1]->enabled = false;
+        $config->routing->rules[2]->enabled = false;
         $node->xray_config = $config;
         $runtime = XrayConfigService::runtime($node);
         $this->assertCount(2, $runtime->routing->rules);
-        $this->assertSame('geosite:cn', $runtime->routing->rules[0]->domain[0]);
+        $this->assertSame('full:www.gstatic.com', $runtime->routing->rules[0]->domain[0]);
+        foreach (array_slice($config->routing->rules, 2, 4) as $rule) $this->assertFalse($rule->enabled);
         $this->assertObjectNotHasProperty('enabled', $runtime->routing->rules[0]);
         $this->assertSame('tcp,udp', $runtime->routing->rules[1]->network);
         $this->assertSame('direct', $runtime->routing->rules[1]->outboundTag);

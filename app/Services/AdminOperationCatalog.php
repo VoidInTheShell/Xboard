@@ -166,6 +166,19 @@ class AdminOperationCatalog
             $descriptor['request_fields'] = $fields;
             if ($actionSegment === 'pause') $descriptor['description'] = 'Disable automatic updates without fetching the remote URL.';
         }
+        if ($path === 'config/save') {
+            $descriptor['request_fields'] = [
+                ['name' => 'admin_login_image', 'type' => 'string', 'description' => 'Independent login-card image URL. Empty uses the default icon.'],
+                ['name' => 'admin_login_image_width', 'type' => 'integer', 'minimum' => 32, 'maximum' => 400],
+                ['name' => 'admin_login_image_height', 'type' => 'integer', 'minimum' => 32, 'maximum' => 400],
+            ];
+        }
+        if ($path === 'config/uploadLoginImage') {
+            $descriptor['description'] = 'Upload an independent login-card PNG/JPEG/WebP image (up to 8 MiB); save its returned URL with config/save.';
+        }
+        if ($path === 'server/manage/update') {
+            $descriptor['description'] = 'Update node business metadata (name, host, port, tags, group_ids, rate, quota, timed rates) without resubmitting protocol or certificate settings. Runtime changes still validate enabled and machine_id.';
+        }
         return $descriptor;
     }
 

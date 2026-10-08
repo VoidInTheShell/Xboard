@@ -30,6 +30,41 @@ class CertificateService
             ->get();
     }
 
+    public function legacyReferencesForMachine(int $machineId): array
+    {
+        $rows = [];
+        foreach (Server::query()->where('machine_id', $machineId)->whereNull('certificate_id')->get() as $server) {
+            $config = $server->cert_config;
+            if (!is_array($config)) continue;
+            $mode = strtolower((string) ($config['cert_mode'] ?? $config['mode'] ?? ''));
+            $source = ['file' => 'path', 'http' => 'acme_http', 'dns' => 'acme_dns', 'self' => 'self_signed', 'content' => 'content'][$mode] ?? null;
+            if (!$source) continue;
+            $path = $source === 'path' ? ($config['cert_file'] ?? null) : null;
+            $keyPath = $source === 'path' ? ($config['key_file'] ?? null) : null;
+            $id = 'legacy:' . $machineId . ':' . substr(hash('sha256', $source === 'path' ? json_encode([$path, $keyPath]) : (string) $server->id), 0, 24);
+            $domains = $config['domains'] ?? [$config['domain'] ?? data_get($server->protocol_settings, 'tls.server_name') ?? data_get($server->protocol_settings, 'tls_settings.server_name') ?? $server->host];
+            $domains = array_values(array_filter((array) $domains, static fn ($domain) => is_string($domain) && $domain !== '' && !filter_var($domain, FILTER_VALIDATE_IP)));
+            $row = $rows[$id] ?? [
+                'id' => $id, 'scope' => 'machine', 'machine_id' => $machineId,
+                'name' => $server->name . ' · 现有证书', 'read_only' => true,
+                'source_type' => $source, 'domains' => [], 'auto_renew' => false,
+                'email' => null, 'dns_provider' => null, 'dns_configured' => false,
+                'certificate_path' => $path, 'private_key_path' => $keyPath,
+                'status' => 'unknown', 'not_before_at' => null, 'expires_at' => null,
+                'fingerprint' => null, 'last_renewed_at' => null, 'next_renewal_at' => null,
+                'last_error' => null, 'references' => [],
+            ];
+            $row['domains'] = array_values(array_unique(array_merge($row['domains'], $domains)));
+            $row['references'][] = [
+                'target_type' => 'managed_inbound', 'target_id' => (string) $server->id,
+                'target_name' => $server->name, 'instance_name' => $server->name,
+                'protocol' => $server->type, 'usage' => 'server',
+            ];
+            $rows[$id] = $row;
+        }
+        return array_values($rows);
+    }
+
     public function listPanel(): Collection
     {
         return ServerCertificate::query()

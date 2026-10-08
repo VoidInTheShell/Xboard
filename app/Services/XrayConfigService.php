@@ -86,34 +86,23 @@ class XrayConfigService
     public static function defaultNodeConfig(): stdClass
     {
         return json_decode(json_encode([
-            'routing' => [
-                'rules' => [
-                    [
-                        'type' => 'field',
-                        'inboundTag' => ['api'],
-                        'outboundTag' => 'api',
-                        'enabled' => true,
-                    ],
-                    [
-                        'type' => 'field',
-                        'ip' => ['geoip:cn'],
-                        'outboundTag' => 'block',
-                        'enabled' => true,
-                    ],
-                    [
-                        'type' => 'field',
-                        'domain' => [
-                            'geosite:cn',
-                            'domain:googleapis.cn',
-                            'domain:google.cn',
-                            'geosite:google-play@cn',
-                            'domain:ping0.cc',
-                        ],
-                        'outboundTag' => 'block',
-                        'enabled' => true,
-                    ],
-                ],
-            ],
+            'routing' => ['rules' => [
+                ['type' => 'field', 'inboundTag' => ['api'], 'outboundTag' => 'api', 'enabled' => true],
+                ['type' => 'field', 'domain' => ['full:www.gstatic.com', 'full:connectivitycheck.gstatic.com'], 'outboundTag' => 'direct', 'enabled' => true],
+                ['type' => 'field', 'ip' => ['geoip:cn'], 'outboundTag' => 'block', 'enabled' => false],
+                ['type' => 'field', 'domain' => ['geosite:category-ads-all'], 'outboundTag' => 'block', 'enabled' => false],
+                ['type' => 'field', 'domain' => ['geosite:cn'], 'outboundTag' => 'block', 'enabled' => false],
+                ['type' => 'field', 'domain' => [
+                    'geosite:google@cn', 'geosite:google-play@cn', 'domain:google.cn',
+                    'domain:googleapis.cn', 'domain:googlecnapps.cn', 'domain:gstatic.cn',
+                    'domain:gstaticcnapps.cn', 'domain:googleapis-cn.com', 'domain:googleapps-cn.com',
+                    'domain:gstatic-cn.com', 'domain:googleflights-cn.net', 'domain:google-analytics-cn.com',
+                    'domain:googleadservices-cn.com', 'domain:googlesyndication-cn.com',
+                    'domain:googletagmanager-cn.com', 'domain:googletagservices-cn.com',
+                    'domain:googletraveladservices-cn.com', 'domain:googleoptimize-cn.com',
+                    'domain:googleads-cn.com', 'domain:googlevads-cn.com',
+                ], 'outboundTag' => 'block', 'enabled' => false],
+            ]],
         ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), false, 512, JSON_THROW_ON_ERROR);
     }
 

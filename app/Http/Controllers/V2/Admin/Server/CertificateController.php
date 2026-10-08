@@ -27,6 +27,7 @@ class CertificateController extends Controller
         return $this->success(
             $this->certificates->listForMachine($machineId)
                 ->map(fn (ServerCertificate $certificate) => $this->certificates->toControlPlaneArray($certificate))
+                ->concat($this->certificates->legacyReferencesForMachine($machineId))
                 ->values()
                 ->all()
         );

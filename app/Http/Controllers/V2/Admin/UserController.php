@@ -252,12 +252,20 @@ class UserController extends Controller
                 return $this->fail([400202, '订阅计划不存在']);
             }
             $params['group_id'] = $plan->group_id;
+            // The assignment dialog sends only plan and expiry. Inherit plan
+            // limits unless the administrator explicitly supplied an override.
+            $params += [
+                'transfer_enable' => $plan->transfer_enable * 1073741824,
+                'speed_limit' => $plan->speed_limit,
+                'device_limit' => $plan->device_limit,
+            ];
         }
         // 处理邀请用户
-        if ($request->input('invite_user_email') && $inviteUser = User::byEmail($request->input('invite_user_email'))->first()) {
-            $params['invite_user_id'] = $inviteUser->id;
-        } else {
-            $params['invite_user_id'] = null;
+        if ($request->exists('invite_user_email')) {
+            $inviteUser = $request->input('invite_user_email')
+                ? User::byEmail($request->input('invite_user_email'))->first()
+                : null;
+            $params['invite_user_id'] = $inviteUser?->id;
         }
 
         if (isset($params['banned']) && (int) $params['banned'] === 1) {

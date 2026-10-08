@@ -26,7 +26,8 @@ class PlanSave extends FormRequest
             'id' => 'nullable|integer',
             'name' => 'required|string|max:255',
             'content' => 'nullable|string',
-            'reset_traffic_method' => 'integer|nullable',
+            'reset_traffic_method' => 'integer|nullable|in:0,1,2,3,4,5',
+            'reset_traffic_day' => 'nullable|integer|between:1,31|required_if:reset_traffic_method,5',
             'transfer_enable' => 'integer|required|min:1',
             'prices' => 'nullable|array',
             'prices.*' => 'nullable|numeric|min:0',
@@ -45,6 +46,12 @@ class PlanSave extends FormRequest
     {
         $validator->after(function (Validator $validator) {
             $this->validatePrices($validator);
+            $plan = $this->input('id') ? Plan::find($this->input('id')) : null;
+            $method = $this->exists('reset_traffic_method') ? $this->input('reset_traffic_method') : $plan?->reset_traffic_method;
+            $day = $this->exists('reset_traffic_day') ? $this->input('reset_traffic_day') : $plan?->reset_traffic_day;
+            if ($method !== null && (int) $method === Plan::RESET_TRAFFIC_CUSTOM_DAY && !in_array((string) $day, array_map('strval', range(1, 31)), true)) {
+                $validator->errors()->add('reset_traffic_day', '请选择 1 至 31 日作为每月重置日');
+            }
         });
     }
 
@@ -122,6 +129,8 @@ class PlanSave extends FormRequest
     public function messages(): array
     {
         return [
+            'reset_traffic_day.required_if' => '请选择每月重置日',
+            'reset_traffic_day.between' => '重置日必须在 1 至 31 日之间',
             'name.required' => '套餐名称不能为空',
             'name.max' => '套餐名称不能超过 255 个字符',
             'transfer_enable.required' => '流量配额不能为空',

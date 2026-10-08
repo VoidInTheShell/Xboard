@@ -86,7 +86,7 @@ class TrafficResetService
       || $user->plan->reset_traffic_method === Plan::RESET_TRAFFIC_NEVER
       || ($user->plan->reset_traffic_method === Plan::RESET_TRAFFIC_FOLLOW_SYSTEM
         && (int) admin_setting('reset_traffic_method', Plan::RESET_TRAFFIC_MONTHLY) === Plan::RESET_TRAFFIC_NEVER)
-      || $user->expired_at === NULL
+      || ($user->expired_at === NULL && $user->plan->reset_traffic_method !== Plan::RESET_TRAFFIC_CUSTOM_DAY)
     ) {
       return null;
     }
@@ -102,10 +102,28 @@ class TrafficResetService
     return match ($resetMethod) {
       Plan::RESET_TRAFFIC_FIRST_DAY_MONTH => $this->getNextMonthFirstDay($now),
       Plan::RESET_TRAFFIC_MONTHLY => $this->getNextMonthlyReset($user, $now),
+      Plan::RESET_TRAFFIC_CUSTOM_DAY => $this->getNextCustomDayReset($user->plan->reset_traffic_day, $now),
       Plan::RESET_TRAFFIC_FIRST_DAY_YEAR => $this->getNextYearFirstDay($now),
       Plan::RESET_TRAFFIC_YEARLY => $this->getNextYearlyReset($user, $now),
       default => null,
     };
+  }
+
+  /**
+   * Reset at local midnight, clamping dates such as February 31 to month end.
+   */
+  private function getNextCustomDayReset(?int $day, Carbon $from): ?Carbon
+  {
+    if ($day === null || $day < 1 || $day > 31) {
+      return null;
+    }
+    $month = $from->copy()->startOfMonth();
+    $target = $month->copy()->day(min($day, $month->daysInMonth));
+    if ($target->greaterThan($from)) {
+      return $target;
+    }
+    $month->addMonthNoOverflow();
+    return $month->day(min($day, $month->daysInMonth));
   }
 
   /**
@@ -229,7 +247,7 @@ class TrafficResetService
 
     return match ($resetMethod) {
       Plan::RESET_TRAFFIC_FIRST_DAY_MONTH => TrafficResetLog::TYPE_FIRST_DAY_MONTH,
-      Plan::RESET_TRAFFIC_MONTHLY => TrafficResetLog::TYPE_MONTHLY,
+      Plan::RESET_TRAFFIC_MONTHLY, Plan::RESET_TRAFFIC_CUSTOM_DAY => TrafficResetLog::TYPE_MONTHLY,
       Plan::RESET_TRAFFIC_FIRST_DAY_YEAR => TrafficResetLog::TYPE_FIRST_DAY_YEAR,
       Plan::RESET_TRAFFIC_YEARLY => TrafficResetLog::TYPE_YEARLY,
       Plan::RESET_TRAFFIC_NEVER => TrafficResetLog::TYPE_MANUAL,

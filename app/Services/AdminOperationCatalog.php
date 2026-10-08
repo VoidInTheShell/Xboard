@@ -166,6 +166,19 @@ class AdminOperationCatalog
             $descriptor['request_fields'] = $fields;
             if ($actionSegment === 'pause') $descriptor['description'] = 'Disable automatic updates without fetching the remote URL.';
         }
+        if ($path === 'plan/save') {
+            $descriptor['description'] = 'Create or edit a plan. Method 5 resets monthly on reset_traffic_day at panel-local midnight, using month end for shorter months; editing the schedule recalculates existing users without resetting used traffic.';
+            $descriptor['request_fields'] = [
+                ['name' => 'id', 'type' => 'integer'],
+                ['name' => 'name', 'type' => 'string', 'required' => true],
+                ['name' => 'transfer_enable', 'type' => 'integer', 'required' => true, 'minimum' => 1, 'description' => 'Plan allowance in GiB.'],
+                ['name' => 'reset_traffic_method', 'type' => 'integer', 'nullable' => true, 'enum' => [null, 0, 1, 2, 3, 4, 5]],
+                ['name' => 'reset_traffic_day', 'type' => 'integer', 'nullable' => true, 'minimum' => 1, 'maximum' => 31, 'description' => 'Required when reset_traffic_method is 5.'],
+            ];
+        }
+        if ($path === 'user/update') {
+            $descriptor['description'] = 'Assigning plan_id inherits the plan quota, speed, device limit and permission group. Explicit quota/speed/device values override inheritance; omitted expiry, used traffic and inviter stay unchanged.';
+        }
         if ($path === 'config/save') {
             $descriptor['request_fields'] = [
                 ['name' => 'admin_login_image', 'type' => 'string', 'description' => 'Independent login-card image URL. Empty uses the default icon.'],

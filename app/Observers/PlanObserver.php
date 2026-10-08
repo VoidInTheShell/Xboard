@@ -13,7 +13,7 @@ class PlanObserver
      */
     public function updated(Plan $plan): void
     {
-        if (!$plan->isDirty('reset_traffic_method')) {
+        if (!$plan->isDirty(['reset_traffic_method', 'reset_traffic_day'])) {
             return;
         }
         $trafficResetService = app(TrafficResetService::class);

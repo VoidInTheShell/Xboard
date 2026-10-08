@@ -47,6 +47,7 @@ class Plan extends Model
     public const RESET_TRAFFIC_NEVER = 2;            // 不重置
     public const RESET_TRAFFIC_FIRST_DAY_YEAR = 3;   // 每年1月1日
     public const RESET_TRAFFIC_YEARLY = 4;           // 按年重置
+    public const RESET_TRAFFIC_CUSTOM_DAY = 5;       // 每月自定义日期
 
     // 定义价格类型
     public const PRICE_TYPE_RESET_TRAFFIC = 'reset_traffic';  // 重置流量价格
@@ -84,6 +85,7 @@ class Plan extends Model
         'content',
         'prices',
         'reset_traffic_method',
+        'reset_traffic_day',
         'capacity_limit',
         'sell',
         'device_limit',
@@ -99,6 +101,7 @@ class Plan extends Model
         'prices' => 'array',
         'tags' => 'array',
         'reset_traffic_method' => 'integer',
+        'reset_traffic_day' => 'integer',
     ];
 
     /**
@@ -115,6 +118,7 @@ class Plan extends Model
             self::RESET_TRAFFIC_NEVER => '不重置',
             self::RESET_TRAFFIC_FIRST_DAY_YEAR => '每年1月1日',
             self::RESET_TRAFFIC_YEARLY => '按年重置',
+            self::RESET_TRAFFIC_CUSTOM_DAY => '每月自定义日期',
         ];
     }
 

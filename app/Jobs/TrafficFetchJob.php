@@ -23,7 +23,8 @@ class TrafficFetchJob implements ShouldQueue
     public function __construct(array $server, array $data, $protocol, int $timestamp)
     {
         $this->onQueue('traffic_fetch');
-        $this->server = $server;
+        // Queue and Horizon retain this snapshot; routing and certificate data are not used here.
+        $this->server = array_intersect_key($server, ['rate' => true]);
         $this->data = $data;
         $this->protocol = $protocol;
         $this->timestamp = $timestamp;

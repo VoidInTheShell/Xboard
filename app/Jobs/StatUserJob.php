@@ -40,7 +40,8 @@ class StatUserJob implements ShouldQueue
     {
         $this->onQueue('stat');
         $this->data = $data;
-        $this->server = $server;
+        // Queue and Horizon retain this snapshot; routing and certificate data are not used here.
+        $this->server = array_intersect_key($server, ['rate' => true]);
         $this->protocol = $protocol;
         $this->recordType = $recordType;
     }

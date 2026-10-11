@@ -58,6 +58,23 @@ class TrafficJobPayloadTest extends TestCase
         $this->executeRoundTrip(true);
     }
 
+    public function test_sqlite_statistics_accumulate_existing_buckets_without_duplicates(): void
+    {
+        $server = new StatServerJob($this->server(), [], 'vless');
+        $user = new StatUserJob($this->server(), [], 'vless');
+        $recordAt = 1700000000;
+        $serverMethod = new \ReflectionMethod($server, 'processServerStatForSqlite');
+        $userMethod = new \ReflectionMethod($user, 'processUserStatForSqlite');
+        foreach ([1, 2] as $_) {
+            $serverMethod->invoke($server, 100, 200, $recordAt);
+            $userMethod->invoke($user, 42, [100, 200], $recordAt);
+        }
+        $this->assertDatabaseCount('v2_stat_server', 1);
+        $this->assertDatabaseCount('v2_stat_user', 1);
+        $this->assertDatabaseHas('v2_stat_server', ['server_id' => 902, 'u' => 200, 'd' => 400]);
+        $this->assertDatabaseHas('v2_stat_user', ['user_id' => 42, 'server_rate' => '1.25', 'u' => 250, 'd' => 500]);
+    }
+
     private function executeRoundTrip(bool $legacy): void
     {
         $user = User::create(['email' => 'traffic-payload@example.test', 'password' => 'unused-test-password',

@@ -5,6 +5,7 @@ namespace App\Observers;
 use App\Jobs\NodeUserSyncJob;
 use App\Models\User;
 use App\Services\TrafficResetService;
+use App\Services\UserRealtimeService;
 
 class UserObserver
 {
@@ -21,6 +22,7 @@ class UserObserver
     // Use wasChanged() to detect what was actually modified.
     $syncFields = ['group_id', 'uuid', 'speed_limit', 'device_limit', 'banned', 'expired_at', 'transfer_enable', 'u', 'd', 'plan_id'];
     $needsSync = $user->wasChanged($syncFields);
+    $needsNotify = $user->wasChanged(array_merge($syncFields, ['next_reset_at', 'balance']));
     $oldGroupId = $user->wasChanged('group_id') ? $user->getOriginal('group_id') : null;
 
     if ($user->wasChanged(['plan_id', 'expired_at'])) {
@@ -29,6 +31,9 @@ class UserObserver
 
     if ($needsSync) {
       NodeUserSyncJob::dispatch($user->id, 'updated', $oldGroupId);
+    }
+    if ($needsNotify) {
+      UserRealtimeService::notifyAccountChanged($user->id);
     }
   }
 
@@ -40,6 +45,7 @@ class UserObserver
 
   public function deleted(User $user): void
   {
+    UserRealtimeService::notifyAccountChanged($user->id);
     if ($user->group_id) {
       NodeUserSyncJob::dispatch($user->id, 'deleted', $user->group_id);
     }

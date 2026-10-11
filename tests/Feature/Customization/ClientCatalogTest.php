@@ -272,6 +272,71 @@ class ClientCatalogTest extends TestCase
         $this->assertArrayNotHasKey('logo_path', $party);
     }
 
+    public function test_client_specific_formats_and_import_placeholders_round_trip(): void
+    {
+        Sanctum::actingAs($this->makeUser(['is_admin' => true]));
+        foreach ([
+            ['general', 'sn://subscription?url={url}&name={name}', 'general'],
+            ['shadowrocket', 'shadowrocket://add/sub://{base64url}', 'shadowrocket'],
+            ['quantumultx', 'quantumult-x:///add-resource?remote-resource={resource}', 'quantumult-x'],
+            ['singbox', 'hiddify://import/{rawurl}#{name}', 'sing-box'],
+        ] as [$template, $link, $flag]) {
+            $payload = array_replace($this->validClientPayload(), [
+                'name' => 'Import ' . $template,
+                'subscription_template' => $template,
+                'quick_import_url' => $link,
+            ]);
+            $id = $this->postJson($this->routePath(AdminClientController::class . '@save'), $payload)
+                ->assertOk()->assertJsonPath('data.quick_import_url', $link)->json('data.id');
+            $catalog = app(\App\Services\ClientCatalogService::class)->listForUser('https://example.com/sub?token=a%2Bb&flag=clash#profile');
+            $url = collect($catalog)->firstWhere('id', $id)['subscription_url'];
+            parse_str(parse_url($url, PHP_URL_QUERY), $query);
+            $this->assertSame($flag, $query['flag']);
+            $this->assertSame('a+b', $query['token']);
+            $this->assertSame('profile', parse_url($url, PHP_URL_FRAGMENT));
+        }
+        $this->getJson($this->routePath(AdminClientController::class . '@fetch'))
+            ->assertOk()->assertJsonStructure(['data' => ['quick_import_placeholders']]);
+    }
+
+    public function test_import_repair_preserves_custom_links_and_platform_recommendations(): void
+    {
+        $catalog = app(\App\Services\ClientCatalogService::class);
+        $catalog->ensureDefaults();
+        $table = fn() => \Illuminate\Support\Facades\DB::table('v2_client_app');
+        foreach (['clash-party', 'clash-verge', 'flclash', 'clash-mi'] as $slug) {
+            $table()->where('slug', $slug)->update(['quick_import_url' => 'clash://install-config?url={url}&name={name}']);
+        }
+        $customLink = 'flclash://install-config?url={url}&custom=keep';
+        $table()->where('slug', 'flclash')->update(['quick_import_url' => $customLink]);
+        $table()->whereIn('slug', ['hiddify', 'surfboard'])->update(['quick_import_enabled' => false, 'quick_import_url' => null]);
+        $quantumult = $catalog->save(array_replace($this->validClientPayload(), [
+            'name' => 'Quantumult X',
+            'quick_import_url' => 'quantumult-x:///update-resource?remote-resource={url}',
+            'subscription_template' => 'general',
+        ]));
+        $shadowrocket = $catalog->save(array_replace($this->validClientPayload(), [
+            'name' => 'Shadowrocket',
+            'quick_import_url' => 'shadowrocket://add/sub://{base64url}',
+            'subscription_template' => 'clashmeta',
+        ]));
+        $before = $catalog->platformDefaults();
+        $migration = require base_path('database/migrations/2026_10_08_000001_correct_client_import_links.php');
+        $migration->up();
+        $migration->up();
+        $this->assertSame($before, $catalog->platformDefaults());
+        $this->assertSame($customLink, $table()->where('slug', 'flclash')->value('quick_import_url'));
+        $this->assertSame('clashmi://install-config?url={url}&name={name}&overwrite=false', $table()->where('slug', 'clash-mi')->value('quick_import_url'));
+        $this->assertSame('clash-verge://install-config?name={name}&url={url}', $table()->where('slug', 'clash-verge')->value('quick_import_url'));
+        $this->assertSame('mihomo://install-config?url={url}&name={name}', $table()->where('slug', 'clash-party')->value('quick_import_url'));
+        $this->assertTrue((bool) $table()->where('slug', 'hiddify')->value('quick_import_enabled'));
+        $this->assertSame('surfboard:///install-config?url={url}', $table()->where('slug', 'surfboard')->value('quick_import_url'));
+        $this->assertSame('quantumult-x:///add-resource?remote-resource={resource}', $quantumult->fresh()->quick_import_url);
+        $this->assertSame('quantumultx', $quantumult->fresh()->subscription_template);
+        $this->assertSame('shadowrocket', $shadowrocket->fresh()->subscription_template);
+        $this->assertDatabaseCount('v2_client_app', 9);
+    }
+
     private function validClientPayload(): array
     {
         return [

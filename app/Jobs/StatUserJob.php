@@ -77,27 +77,26 @@ class StatUserJob implements ShouldQueue
     protected function processUserStatForSqlite(int $uid, array $v, int $recordAt): void
     {
         DB::transaction(function () use ($uid, $v, $recordAt) {
-            $existingRecord = StatUser::where([
+            $attributes = [
                 'user_id' => $uid,
                 'server_rate' => $this->server['rate'],
                 'record_at' => $recordAt,
                 'record_type' => $this->recordType,
-            ])->first();
-
-            if ($existingRecord) {
-                $existingRecord->update([
-                    'u' => $existingRecord->u + intval($v[0] * $this->server['rate']),
-                    'd' => $existingRecord->d + intval($v[1] * $this->server['rate']),
-                    'updated_at' => time(),
-                ]);
-            } else {
+            ];
+            $u = intval($v[0] * $this->server['rate']);
+            $d = intval($v[1] * $this->server['rate']);
+            // Update first so SQLite does not hold a deferred read snapshot
+            // and then fail with SQLITE_BUSY_SNAPSHOT when it is upgraded.
+            $updated = StatUser::where($attributes)->update([
+                'u' => DB::raw("u + {$u}"),
+                'd' => DB::raw("d + {$d}"),
+                'updated_at' => time(),
+            ]);
+            if ($updated === 0) {
                 StatUser::create([
-                    'user_id' => $uid,
-                    'server_rate' => $this->server['rate'],
-                    'record_at' => $recordAt,
-                    'record_type' => $this->recordType,
-                    'u' => intval($v[0] * $this->server['rate']),
-                    'd' => intval($v[1] * $this->server['rate']),
+                    ...$attributes,
+                    'u' => $u,
+                    'd' => $d,
                     'created_at' => time(),
                     'updated_at' => time(),
                 ]);

@@ -15,7 +15,7 @@ use Throwable;
 
 class ClientCatalogService
 {
-    public const TEMPLATES = ['singbox', 'clash', 'clashmeta', 'stash', 'surge', 'surfboard'];
+    public const TEMPLATES = ['singbox', 'clash', 'clashmeta', 'stash', 'surge', 'surfboard', 'general', 'shadowrocket', 'quantumultx'];
 
     public const DEVICE_PLATFORMS = [
         'desktop' => ['windows', 'mac-intel', 'mac-apple-silicon', 'linux'],
@@ -25,6 +25,9 @@ class ClientCatalogService
     private const INITIALIZED_SETTING = 'client_catalog_initialized';
 
     private const TEMPLATE_FLAGS = [
+        'general' => 'general',
+        'shadowrocket' => 'shadowrocket',
+        'quantumultx' => 'quantumult-x',
         'singbox' => 'sing-box',
         'clash' => 'clash',
         'clashmeta' => 'meta',

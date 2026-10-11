@@ -7,6 +7,7 @@ use App\Models\ServerMachine;
 use App\Services\DeviceStateService;
 use App\Services\NodeRegistry;
 use App\Services\ServerService;
+use App\Services\UserRealtimeService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
@@ -24,6 +25,9 @@ class NodeWorker
     private const HEARTBEAT_TTL = 30;
 
     private Worker $worker;
+
+    /** @var array<int, array<int, TcpConnection>> */
+    private array $userConnections = [];
 
     private array $handlers = [
         'pong' => [NodeEventHandlers::class, 'handlePong'],
@@ -82,6 +86,16 @@ class NodeWorker
         Timer::add(self::PING_INTERVAL, function () {
             $seen = [];
 
+            foreach ($this->userConnections as $connections) {
+                foreach ($connections as $conn) {
+                    if (($conn->userExpiresAt ?? 0) <= time()) {
+                        $conn->close();
+                    } else {
+                        $conn->send(json_encode(['event' => 'ping']));
+                    }
+                }
+            }
+
             foreach (NodeRegistry::getConnectedNodeIds() as $nodeId) {
                 $conn = NodeRegistry::get($nodeId);
                 if ($conn) {
@@ -124,7 +138,7 @@ class NodeWorker
     public function onConnect(TcpConnection $conn): void
     {
         $conn->authTimer = Timer::add(self::AUTH_TIMEOUT, function () use ($conn) {
-            if (empty($conn->nodeId) && empty($conn->machineNodeIds)) {
+            if (empty($conn->nodeId) && empty($conn->machineNodeIds) && empty($conn->userId)) {
                 $conn->close(json_encode([
                     'event' => 'error',
                     'data' => ['message' => 'auth timeout'],
@@ -149,7 +163,9 @@ class NodeWorker
         }
 
         // 判断认证模式
-        if (!empty($params['machine_id'])) {
+        if (array_key_exists('user_ticket', $params)) {
+            $this->authenticateUser($conn, $params);
+        } elseif (!empty($params['machine_id'])) {
             $this->authenticateMachine($conn, $params);
         } else {
             $this->authenticateNode($conn, $params);
@@ -260,8 +276,34 @@ class NodeWorker
         }
     }
 
+    private function authenticateUser(TcpConnection $conn, array $params): void
+    {
+        $ticket = $params['user_ticket'] ?? '';
+        $userId = is_string($ticket) ? UserRealtimeService::consumeTicket($ticket) : null;
+        if (!$userId) {
+            $conn->close(json_encode(['event' => 'error', 'data' => ['message' => 'invalid ticket']]));
+            return;
+        }
+        $connections = $this->userConnections[$userId] ?? [];
+        if (count($connections) >= 10) reset($connections)->close();
+        $conn->userId = $userId;
+        // Renew authentication periodically, including revoked sessions.
+        $conn->userExpiresAt = time() + 300;
+        $this->userConnections[$userId][spl_object_id($conn)] = $conn;
+        $conn->send(json_encode(['event' => 'auth.success', 'data' => []]));
+    }
+
+    public function pushAccountUpdated(int $userId): void
+    {
+        foreach ($this->userConnections[$userId] ?? [] as $conn) {
+            $conn->send(json_encode(['event' => 'account.updated', 'data' => []]));
+        }
+    }
+
     public function onMessage(TcpConnection $conn, $data): void
     {
+        // User connections cannot send node reports or commands.
+        if (!empty($conn->userId)) return;
         $msg = json_decode($data, true);
         if (!is_array($msg)) {
             return;
@@ -299,12 +341,21 @@ class NodeWorker
 
     public function onClose(TcpConnection $conn): void
     {
+        if (!empty($conn->userId)) {
+            $userId = (int) $conn->userId;
+            unset($this->userConnections[$userId][spl_object_id($conn)]);
+            if (empty($this->userConnections[$userId])) unset($this->userConnections[$userId]);
+            return;
+        }
         $service = app(DeviceStateService::class);
 
         // 机器模式：清理所有关联节点
         if (!empty($conn->machineNodeIds)) {
             $machineId = $conn->machineId ?? 'unknown';
             foreach ($conn->machineNodeIds as $nodeId) {
+                // A replacement connection may already own this node when the
+                // old socket's delayed close callback arrives.
+                if (NodeRegistry::get($nodeId) !== $conn) continue;
                 NodeRegistry::remove($nodeId, $conn);
                 Cache::forget("node_ws_alive:{$nodeId}");
 
@@ -329,6 +380,7 @@ class NodeWorker
         // 旧模式：单节点
         if (!empty($conn->nodeId)) {
             $nodeId = $conn->nodeId;
+            if (NodeRegistry::get($nodeId) !== $conn) return;
             NodeRegistry::remove($nodeId, $conn);
             Cache::forget("node_ws_alive:{$nodeId}");
 
@@ -373,6 +425,11 @@ class NodeWorker
 
             $event = $payload['event'] ?? '';
             $data = $payload['data'] ?? [];
+
+            if (!empty($payload['user_id'])) {
+                if ($event === 'account.updated') $this->pushAccountUpdated((int) $payload['user_id']);
+                return;
+            }
 
             // Machine-level events (e.g., sync.nodes)
             $machineId = $payload['machine_id'] ?? null;

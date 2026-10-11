@@ -33,6 +33,8 @@ class UserRoute
                 $router->post('/review', [\App\Http\Controllers\V1\User\UsageController::class, 'review']);
             });
             // User
+            $router->post('/events/ticket', [\App\Http\Controllers\V1\User\EventController::class, 'ticket'])
+                ->middleware('throttle:30,1');
             $router->get('/resetSecurity', [UserController::class, 'resetSecurity']);
             $router->get('/info', [UserController::class, 'info']);
             $router->post('/changePassword', [UserController::class, 'changePassword']);

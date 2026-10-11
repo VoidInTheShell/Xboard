@@ -23,6 +23,13 @@ class ClientController extends Controller
             'clients' => $this->catalog->listForAdmin(),
             'platform_defaults' => $this->catalog->platformDefaults(),
             'templates' => ClientCatalogService::TEMPLATES,
+            'quick_import_placeholders' => [
+                '{url}' => 'Percent-encoded subscription URL',
+                '{rawurl}' => 'Subscription URL without outer percent-encoding (Hiddify import path)',
+                '{base64url}' => 'Standard Base64 of the UTF-8 subscription URL',
+                '{resource}' => 'Percent-encoded Quantumult X server_remote JSON',
+                '{name}' => 'Percent-encoded subscription name',
+            ],
             'device_platforms' => ClientCatalogService::DEVICE_PLATFORMS,
         ]);
     }

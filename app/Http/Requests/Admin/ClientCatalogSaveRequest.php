@@ -108,10 +108,10 @@ class ClientCatalogSaveRequest extends FormRequest
                 '快速导入链接必须以有效的 http(s) 或客户端 Scheme 开头。'
             );
         }
-        if (!str_contains($url, '{url}') && !str_contains($url, '{base64url}')) {
+        if (!preg_match('/\{(?:url|rawurl|base64url|resource)\}/', $url)) {
             $validator->errors()->add(
                 'quick_import_url',
-                '快速导入链接必须包含 {url} 或 {base64url} 订阅地址占位符。'
+                '快速导入链接必须包含 {url}、{rawurl}、{base64url} 或 {resource} 订阅地址占位符。'
             );
         }
     }

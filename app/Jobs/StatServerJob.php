@@ -94,25 +94,21 @@ class StatServerJob implements ShouldQueue
     protected function processServerStatForSqlite(int $u, int $d, int $recordAt): void
     {
         DB::transaction(function () use ($u, $d, $recordAt) {
-            $existingRecord = StatServer::where([
+            $attributes = [
                 'record_at' => $recordAt,
                 'server_id' => $this->server['id'],
                 'server_type' => $this->protocol,
                 'record_type' => $this->recordType,
-            ])->first();
-
-            if ($existingRecord) {
-                $existingRecord->update([
-                    'u' => $existingRecord->u + $u,
-                    'd' => $existingRecord->d + $d,
-                    'updated_at' => time(),
-                ]);
-            } else {
+            ];
+            // Update first to avoid a deferred SQLite read-to-write upgrade.
+            $updated = StatServer::where($attributes)->update([
+                'u' => DB::raw("u + {$u}"),
+                'd' => DB::raw("d + {$d}"),
+                'updated_at' => time(),
+            ]);
+            if ($updated === 0) {
                 StatServer::create([
-                    'record_at' => $recordAt,
-                    'server_id' => $this->server['id'],
-                    'server_type' => $this->protocol,
-                    'record_type' => $this->recordType,
+                    ...$attributes,
                     'u' => $u,
                     'd' => $d,
                     'created_at' => time(),

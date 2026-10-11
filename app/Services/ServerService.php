@@ -56,6 +56,11 @@ class ServerService
      */
     public static function getAvailableServers(User $user): array
     {
+        // Accounts without a permission group cannot access any nodes.
+        if ($user->group_id === null) {
+            return [];
+        }
+
         $servers = Server::forGroup($user->group_id)
             ->where('show', true)
             ->where(function ($query) {
@@ -254,14 +259,22 @@ class ServerService
             }
             $report = array_filter($report, static fn ($value) => $value !== null);
             $report['reported_at'] = now()->timestamp;
-            Cache::put("xray_config_apply:{$node->id}", $report, \App\Services\Logs\LogSettings::get()['appliedHours'] * 3600);
-            // Keep the last real node acknowledgement with the desired
-            // configuration. This is intentionally a narrow allow-list, so
-            // metrics or credentials cannot become part of the application
-            // receipt returned by the admin API.
-            DB::table('v2_server')->where('id', $node->id)->update([
-                'xray_apply' => json_encode($report, JSON_UNESCAPED_SLASHES),
-            ]);
+            // Repeated heartbeat receipts must not compete with traffic
+            // accounting for SQLite's single writer.
+            $receiptFingerprint = hash('sha256', json_encode([
+                'config_apply' => $reported,
+                'activation' => $metrics['activation'] ?? null,
+                'superseded' => $metrics['superseded'] ?? null,
+                'caddy' => $metrics['caddy'] ?? null,
+            ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            $receiptKey = "xray_config_apply_fingerprint:{$node->id}";
+            if (Cache::get($receiptKey) !== $receiptFingerprint) {
+                Cache::put("xray_config_apply:{$node->id}", $report, \App\Services\Logs\LogSettings::get()['appliedHours'] * 3600);
+                DB::table('v2_server')->where('id', $node->id)->update([
+                    'xray_apply' => json_encode($report, JSON_UNESCAPED_SLASHES),
+                ]);
+                Cache::put($receiptKey, $receiptFingerprint, 86400);
+            }
             $node->setAttribute('xray_apply', (object) $report);
         }
         $nodeType = strtoupper($node->type);

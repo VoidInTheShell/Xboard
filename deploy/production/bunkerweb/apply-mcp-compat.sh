@@ -21,7 +21,7 @@ fail() {
 sed -i 's/\r$//' "$CONFIG_FILE"
 grep -q '^# XBOARD-MCP-COMPAT$' "$CONFIG_FILE" || fail "configuration marker is missing"
 grep -q '^# XBOARD-NODE-CONTROL-COMPAT$' "$CONFIG_FILE" || fail "node control compatibility marker is missing"
-[ "$(grep -Fc 'proxy_intercept_errors off;' "$CONFIG_FILE")" = "3" ] \
+[ "$(grep -Fc 'proxy_intercept_errors off;' "$CONFIG_FILE")" = "4" ] \
     || fail "JSON authentication responses must bypass the server error page"
 
 for container in "$SCHEDULER" "$BUNKERWEB" "$DATABASE"; do

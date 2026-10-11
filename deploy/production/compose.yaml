@@ -40,6 +40,7 @@ services:
     networks:
       - xboard-internal
       - xboard-egress
+      - bw-services
     mem_limit: 512m
     mem_reservation: 256m
     cpus: 1.0
